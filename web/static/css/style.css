@@ -1,0 +1,139 @@
+/* Основные стили */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f0f0f0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+h1 {
+    text-align: center;
+    color: #333;
+}
+
+/* Элементы управления игрой */
+.game-controls {
+    margin: 20px 0;
+    text-align: center;
+}
+
+button {
+    padding: 10px 20px;
+    margin: 0 10px;
+    font-size: 16px;
+    cursor: pointer;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+select {
+    padding: 10px;
+    font-size: 16px;
+    margin: 0 10px;
+}
+
+/* Игровая доска */
+.game-board {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.opponent-board,
+.player-board {
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.street {
+    margin: 10px 0;
+}
+
+h2 {
+    margin: 0;
+    color: #444;
+}
+
+h3 {
+    margin: 5px 0;
+    color: #666;
+}
+
+/* Карты */
+.cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px;
+    min-height: 100px;
+    background-color: #f8f8f8;
+    border-radius: 4px;
+}
+
+.card {
+    width: 60px;
+    height: 90px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    cursor: pointer;
+    background-color: white;
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.card.red {
+    color: red;
+}
+
+.card.black {
+    color: black;
+}
+
+/* Статус игры */
+.game-status {
+    margin-top: 20px;
+    padding: 15px;
+    text-align: center;
+    font-size: 18px;
+    background-color: #e8e8e8;
+    border-radius: 4px;
+}
+
+/* Анимации */
+@keyframes cardPlace {
+    from {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.card-placed {
+    animation: cardPlace 0.3s ease-out;
+}
