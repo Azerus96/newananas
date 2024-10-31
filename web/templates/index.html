@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Open Face Chinese Poker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Open Face Chinese Poker</h1>
+        
+        <div class="game-controls">
+            <button id="newGameBtn">New Game</button>
+            <select id="opponentSelect">
+                <option value="random">Random Agent</option>
+                <option value="dqn">DQN Agent</option>
+            </select>
+        </div>
+        
+        <div class="game-board">
+            <div class="opponent-board">
+                <h2>Opponent's Board</h2>
+                <div class="street front">
+                    <h3>Front</h3>
+                    <div id="opponentFront" class="cards"></div>
+                </div>
+                <div class="street middle">
+                    <h3>Middle</h3>
+                    <div id="opponentMiddle" class="cards"></div>
+                </div>
+                <div class="street back">
+                    <h3>Back</h3>
+                    <div id="opponentBack" class="cards"></div>
+                </div>
+            </div>
+            
+            <div class="player-board">
+                <h2>Your Board</h2>
+                <div class="street front">
+                    <h3>Front</h3>
+                    <div id="playerFront" class="cards"></div>
+                </div>
+                <div class="street middle">
+                    <h3>Middle</h3>
+                    <div id="playerMiddle" class="cards"></div>
+                </div>
+                <div class="street back">
+                    <h3>Back</h3>
+                    <div id="playerBack" class="cards"></div>
+                </div>
+            </div>
+            
+            <div class="player-hand">
+                <h2>Your Cards</h2>
+                <div id="playerHand" class="cards"></div>
+            </div>
+        </div>
+        
+        <div id="gameStatus" class="game-status"></div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/game.js') }}"></script>
+</body>
+</html>
