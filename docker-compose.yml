@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    environment:
+      - FLASK_ENV=development
+      - FLASK_APP=rlofc.web.app
+    command: flask run --host=0.0.0.0
+    
+  training:
+    build: .
+    volumes:
+      - .:/app
+      - ./models:/app/models
+      - ./logs:/app/logs
+    command: python -m rlofc.training.train
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  notebook:
+    build: .
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+      - ./notebooks:/app/notebooks
+    command: jupyter notebook --ip=0.0.0.0 --allow-root --NotebookApp.token=''
