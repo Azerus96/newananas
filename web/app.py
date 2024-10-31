@@ -1,11 +1,13 @@
+import os
 from flask import Flask, render_template, request, jsonify
 from typing import Optional
 
-from ..core.game import Game
-from ..agents.human import HumanAgent
-from ..agents.random import RandomAgent
-from ..agents.rl.dqn import DQNAgent
-from ..utils.config import Config
+# Абсолютные импорты вместо относительных
+from core.game import Game
+from agents.human import HumanAgent
+from agents.random import RandomAgent
+from agents.rl.dqn import DQNAgent
+from utils.config import Config
 
 app = Flask(__name__)
 config = Config()
@@ -132,5 +134,14 @@ def _get_game_state():
         
     return state
 
+def main():
+    """Точка входа для запуска веб-приложения"""
+    port = int(os.environ.get('PORT', 5000))
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=config.get('web.debug', False)
+    )
+
 if __name__ == '__main__':
-    app.run(debug=config.get('web.debug', False))
+    main()
