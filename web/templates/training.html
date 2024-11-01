@@ -1,0 +1,128 @@
+# web/templates/training.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    # web/templates/training.html (продолжение)
+
+    <title>Training Mode - Open Face Chinese Poker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/training.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Training Mode</h1>
+        
+        <!-- Панель настроек -->
+        <div class="settings-panel">
+            <div class="setting-group">
+                <label>
+                    <input type="checkbox" id="fantasyMode"> Fantasy Mode
+                </label>
+                <label>
+                    <input type="checkbox" id="progressiveFantasy"> Progressive Fantasy
+                </label>
+            </div>
+            
+            <div class="setting-group">
+                <label>AI Think Time (seconds):
+                    <input type="number" id="thinkTime" min="1" max="60" value="30">
+                </label>
+            </div>
+            
+            <button id="startTraining">Start Training</button>
+            <button id="resetBoard">Reset Board</button>
+        </div>
+
+        <!-- Вышедшие карты -->
+        <div class="removed-cards-section">
+            <h3>Removed Cards</h3>
+            <div class="removed-cards-rows">
+                <div id="removedCardsRow1" class="cards-row"></div>
+                <div id="removedCardsRow2" class="cards-row"></div>
+            </div>
+        </div>
+
+        <!-- Игровое поле -->
+        <div class="game-board">
+            <div class="pyramid-table">
+                <!-- Верхняя улица (3 карты) -->
+                <div class="street front">
+                    <div id="frontStreet" class="cards-row"></div>
+                </div>
+                
+                <!-- Средняя улица (5 карт) -->
+                <div class="street middle">
+                    <div id="middleStreet" class="cards-row"></div>
+                </div>
+                
+                <!-- Нижняя улица (5 карт) -->
+                <div class="street back">
+                    <div id="backStreet" class="cards-row"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Панель выбора карт -->
+        <div class="card-selection">
+            <div class="input-cards-row">
+                <div id="inputCards" class="cards-row"></div>
+            </div>
+            
+            <div class="card-picker">
+                <div class="ranks">
+                    <!-- Ранги карт -->
+                    <button class="rank" data-rank="A">A</button>
+                    <button class="rank" data-rank="K">K</button>
+                    <button class="rank" data-rank="Q">Q</button>
+                    <button class="rank" data-rank="J">J</button>
+                    <button class="rank" data-rank="T">10</button>
+                    <button class="rank" data-rank="9">9</button>
+                    <button class="rank" data-rank="8">8</button>
+                    <button class="rank" data-rank="7">7</button>
+                    <button class="rank" data-rank="6">6</button>
+                    <button class="rank" data-rank="5">5</button>
+                    <button class="rank" data-rank="4">4</button>
+                    <button class="rank" data-rank="3">3</button>
+                    <button class="rank" data-rank="2">2</button>
+                </div>
+                
+                <div class="suits">
+                    <!-- Масти -->
+                    <button class="suit" data-suit="s">♠</button>
+                    <button class="suit" data-suit="h">♥</button>
+                    <button class="suit" data-suit="d">♦</button>
+                    <button class="suit" data-suit="c">♣</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Кнопки управления -->
+        <div class="control-buttons">
+            <button id="distributeCards">Distribute Cards</button>
+            <button id="clearSelection">Clear Selection</button>
+        </div>
+
+        <!-- Статистика -->
+        <div class="statistics-panel">
+            <h3>Training Statistics</h3>
+            <div id="trainingStats" class="stats-container">
+                <div class="stat-group">
+                    <span class="stat-label">Moves Analyzed:</span>
+                    <span id="movesCount" class="stat-value">0</span>
+                </div>
+                <div class="stat-group">
+                    <span class="stat-label">Average Think Time:</span>
+                    <span id="avgThinkTime" class="stat-value">0s</span>
+                </div>
+                <div class="stat-group">
+                    <span class="stat-label">Fantasy Success Rate:</span>
+                    <span id="fantasyRate" class="stat-value">0%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/training.js') }}"></script>
+</body>
+</html>
