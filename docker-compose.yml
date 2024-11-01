@@ -1,25 +1,41 @@
+# docker-compose.yml
+
 version: '3.8'
 
 services:
   web:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "5000:5000"
     volumes:
-      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
     environment:
-      - FLASK_ENV=development
-      - FLASK_APP=rlofc.web.app
-    command: flask run --host=0.0.0.0
+      - FLASK_ENV=production
+      - FLASK_APP=web.app
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   training:
     build: .
     volumes:
-      - .:/app
+      - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
-    command: python -m rlofc.training.train
     environment:
+      - TRAINING_MODE=true
       - CUDA_VISIBLE_DEVICES=0
     deploy:
       resources:
@@ -28,12 +44,22 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    command: python -m training.trainer
 
-  notebook:
-    build: .
-    ports:
-      - "8888:8888"
+  prometheus:
+    image: prom/prometheus
     volumes:
-      - .:/app
-      - ./notebooks:/app/notebooks
-    command: jupyter notebook --ip=0.0.0.0 --allow-root --NotebookApp.token=''
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - web
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - ./monitoring/grafana:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
