@@ -1,7 +1,8 @@
 # requirements/prod.txt
 
 # Основные зависимости
-Flask==2.0.1
+Flask==2.3.3
+Werkzeug==2.3.7
 numpy==1.21.2
 pandas==1.3.3
 torch==1.9.0
