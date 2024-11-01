@@ -1,1 +1,118 @@
+/* web/static/css/fantasy.css */
 
+.fantasy-panel {
+    background-color: #fff;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 20px;
+}
+
+.fantasy-status {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin-top: 10px;
+}
+
+.status-item {
+    background-color: #f8f8f8;
+    padding: 10px;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.fantasy-active .status-item {
+    background-color: #e8f5e9;
+    border: 1px solid #81c784;
+}
+
+.progressive-bonus {
+    background-color: #fff3e0;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+.stats-section {
+    margin-bottom: 20px;
+}
+
+.triggers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.trigger-item {
+    background-color: #f8f8f8;
+    padding: 8px;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.patterns-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.pattern-item {
+    background-color: #f8f8f8;
+    padding: 10px;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pattern-rate {
+    font-weight: bold;
+    color: #2196f3;
+}
+
+.pattern-uses {
+    color: #666;
+    font-size: 0.9em;
+}
+
+/* Анимации */
+@keyframes fantasyPulse {
+    0% { box-shadow: 0 0 0 0 rgba(129, 199, 132, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(129, 199, 132, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(129, 199, 132, 0); }
+}
+
+.fantasy-active {
+    animation: fantasyPulse 2s infinite;
+}
+
+/* Мобильная адаптация */
+@media (max-width: 768px) {
+    .status-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .triggers-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .pattern-item {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .pattern-rate {
+        margin: 5px 0;
+    }
+}
