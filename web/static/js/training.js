@@ -175,5 +175,237 @@ class TrainingMode {
         });
     }
 
+    // web/static/js/training.js (продолжение)
+
     updateStatistics(stats) {
-        document.getElementById('movesCount').textContent = stats.moves_analyze
+        document.getElementById('movesCount').textContent = stats.moves_analyzed;
+        document.getElementById('avgThinkTime').textContent = `${stats.average_think_time.toFixed(2)}s`;
+        document.getElementById('fantasyRate').textContent = `${(stats.fantasy_success_rate * 100).toFixed(1)}%`;
+        
+        // Обновляем дополнительную статистику
+        this.updateDetailedStats(stats);
+    }
+
+    updateDetailedStats(stats) {
+        const detailedStats = {
+            'bestCombinations': stats.best_combinations || {},
+            'streetSuccess': stats.street_success_rates || {},
+            'learningProgress': stats.learning_progress || {}
+        };
+
+        // Обновляем графики если они есть
+        if (this.charts) {
+            this.charts.updateData(detailedStats);
+        }
+    }
+
+    getInputCards() {
+        const cards = [];
+        document.querySelectorAll('#inputCards .card-slot').forEach(slot => {
+            const cardElement = slot.querySelector('.card');
+            if (cardElement) {
+                const cardText = cardElement.textContent;
+                cards.push({
+                    rank: cardText[0],
+                    suit: cardText[1]
+                });
+            }
+        });
+        return cards;
+    }
+
+    getRemovedCards() {
+        const cards = [];
+        ['removedCardsRow1', 'removedCardsRow2'].forEach(rowId => {
+            document.querySelectorAll(`#${rowId} .card-slot`).forEach(slot => {
+                const cardElement = slot.querySelector('.card');
+                if (cardElement) {
+                    const cardText = cardElement.textContent;
+                    cards.push({
+                        rank: cardText[0],
+                        suit: cardText[1]
+                    });
+                }
+            });
+        });
+        return cards;
+    }
+
+    showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = message;
+        
+        document.querySelector('.container').prepend(errorDiv);
+        
+        setTimeout(() => {
+            errorDiv.remove();
+        }, 3000);
+    }
+
+    resetBoard() {
+        // Очищаем все слоты
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            slot.innerHTML = '';
+        });
+        
+        // Сбрасываем выбранные значения
+        this.clearSelection();
+        
+        // Сбрасываем конфигурацию
+        document.getElementById('fantasyMode').checked = false;
+        document.getElementById('progressiveFantasy').checked = false;
+        document.getElementById('thinkTime').value = 30;
+        
+        this.currentConfig = {
+            fantasyMode: false,
+            progressiveFantasy: false,
+            thinkTime: 30
+        };
+    }
+
+    startTraining() {
+        this.resetBoard();
+        this.initializeCharts();
+        this.updateStatistics({
+            moves_analyzed: 0,
+            average_think_time: 0,
+            fantasy_success_rate: 0
+        });
+    }
+
+    initializeCharts() {
+        this.charts = new TrainingCharts();
+    }
+}
+
+class TrainingCharts {
+    constructor() {
+        this.setupChartContainers();
+        this.initializeCharts();
+    }
+
+    setupChartContainers() {
+        const chartsContainer = document.createElement('div');
+        chartsContainer.className = 'charts-container';
+        chartsContainer.innerHTML = `
+            <div class="chart-wrapper">
+                <canvas id="combinationsChart"></canvas>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="successRateChart"></canvas>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="learningChart"></canvas>
+            </div>
+        `;
+        
+        document.querySelector('.statistics-panel').appendChild(chartsContainer);
+    }
+
+    initializeCharts() {
+        // Инициализация графика комбинаций
+        this.combinationsChart = new Chart(
+            document.getElementById('combinationsChart').getContext('2d'),
+            {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Best Combinations',
+                        data: [],
+                        backgroundColor: 'rgba(54, 162, 235, 0.5)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            }
+        );
+
+        // Инициализация графика успешности
+        this.successRateChart = new Chart(
+            document.getElementById('successRateChart').getContext('2d'),
+            {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Success Rate',
+                        data: [],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 1
+                        }
+                    }
+                }
+            }
+        );
+
+        // Инициализация графика прогресса обучения
+        this.learningChart = new Chart(
+            document.getElementById('learningChart').getContext('2d'),
+            {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Learning Progress',
+                        data: [],
+                        borderColor: 'rgba(153, 102, 255, 1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            }
+        );
+    }
+
+    updateData(stats) {
+        this.updateCombinationsChart(stats.bestCombinations);
+        this.updateSuccessRateChart(stats.streetSuccess);
+        this.updateLearningChart(stats.learningProgress);
+    }
+
+    updateCombinationsChart(combinations) {
+        this.combinationsChart.data.labels = Object.keys(combinations);
+        this.combinationsChart.data.datasets[0].data = Object.values(combinations);
+        this.combinationsChart.update();
+    }
+
+    updateSuccessRateChart(successRates) {
+        this.successRateChart.data.labels = Object.keys(successRates);
+        this.successRateChart.data.datasets[0].data = Object.values(successRates);
+        this.successRateChart.update();
+    }
+
+    updateLearningChart(progress) {
+        this.learningChart.data.labels = progress.map((_, index) => `Episode ${index + 1}`);
+        this.learningChart.data.datasets[0].data = progress;
+        this.learningChart.update();
+    }
+}
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+    window.trainingMode = new TrainingMode();
+});
