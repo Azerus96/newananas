@@ -7,7 +7,7 @@ from core.board import Board, Street
 from core.card import Card
 from core.deck import Deck
 from core.fantasy import FantasyMode, FantasyManager, FantasyStrategy
-from core.analytics import AnalyticsManager
+from analytics.analytics_manager import AnalyticsManager
 from agents.base import BaseAgent
 from agents.fantasy import FantasyAgent
 from utils.logger import get_logger
