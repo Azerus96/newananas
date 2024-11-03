@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from enum import Enum
 
-from card import Card
+from core.card import Card
 from evaluation.evaluator import HandEvaluator
 from evaluation.royalty import RoyaltyCalculator
 
