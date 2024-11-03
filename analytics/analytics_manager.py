@@ -6,7 +6,7 @@ import json
 import threading
 from datetime import datetime
 
-from card_tracker import CardTracker
+from analytics.card_tracker import CardTracker
 from core.game import Game, GameResult
 from utils.logger import get_logger
 
