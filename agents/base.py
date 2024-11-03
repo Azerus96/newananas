@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Optional
 
-from ..core.card import Card
-from ..core.board import Street, Board
+from core.card import Card
+from core.board import Street, Board
 
 class BaseAgent(ABC):
     """Базовый класс для всех агентов"""
