@@ -4,8 +4,8 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras.optimizers import Adam
 
-from .base import RLAgent
-from ...utils.logger import get_logger
+from base import RLAgent
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
