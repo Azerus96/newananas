@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base import BaseAgent
+from agents.base import BaseAgent
 from core.card import Card
 from core.board import Board, Street
 from core.fantasy import FantasyMode
