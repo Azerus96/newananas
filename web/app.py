@@ -1,24 +1,30 @@
-# web/app.py
+import sys
+import os
+from pathlib import Path
+
+# Добавляем корневую директорию проекта в PYTHONPATH
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
 
 from flask import Flask, render_template, jsonify, request, g
 from typing import Optional, Dict
-import os
 import json
 from datetime import datetime
 from prometheus_client import Counter, Histogram
 from logging.config import dictConfig
 
-from ..core.game import Game, GameState, GameResult
-from ..core.fantasy import FantasyMode
-from ..agents.random import RandomAgent
-from ..agents.rl.dqn import DQNAgent
-from ..agents.rl.a3c import A3CAgent
-from ..agents.rl.ppo import PPOAgent
-from ..agents.rl.fantasy_agent import FantasyAgent
-from ..training.training_mode import TrainingSession, TrainingConfig
-from ..analytics.statistics import StatisticsManager
-from ..utils.config import config
-from ..utils.logger import get_logger
+# Абсолютные импорты
+from core.game import Game, GameState, GameResult
+from core.fantasy import FantasyMode
+from agents.random import RandomAgent
+from agents.rl.dqn import DQNAgent
+from agents.rl.a3c import A3CAgent
+from agents.rl.ppo import PPOAgent
+from agents.rl.fantasy_agent import FantasyAgent
+from training.training_mode import TrainingSession, TrainingConfig
+from analytics.statistics import StatisticsManager
+from utils.config import config
+from utils.logger import get_logger
 
 # Настройка логирования
 dictConfig({
@@ -36,7 +42,7 @@ dictConfig({
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/app.log',
+            'filename': os.path.join(ROOT_DIR, 'logs', 'app.log'),
             'maxBytes': 1024 * 1024,
             'backupCount': 10,
             'formatter': 'default'
@@ -189,92 +195,6 @@ def make_move():
             'message': str(e)
         }), 500
 
-@app.route('/api/training/start', methods=['POST'])
-def start_training():
-    """Начинает новую сессию тренировки"""
-    global current_training_session
-    
-    try:
-        data = request.get_json()
-        config = TrainingConfig(
-            fantasy_mode=data.get('fantasy_mode', False),
-            progressive_fantasy=data.get('progressive_fantasy', False),
-            time_limit=data.get('time_limit', 30)
-        )
-        
-        current_training_session = TrainingSession(config)
-        GAME_METRICS.labels(type='training_start').inc()
-        
-        return jsonify({
-            'status': 'ok',
-            'session_id': current_training_session.id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error starting training session: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/training/distribute', methods=['POST'])
-def distribute_cards():
-    """Обрабатывает запрос на распределение карт в режиме тренировки"""
-    if current_training_session is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active training session'
-        }), 400
-
-    # web/app.py (продолжение)
-
-    try:
-        data = request.get_json()
-        
-        # Получаем ход от ИИ
-        move_result = current_training_session.make_move(
-            input_cards=data.get('input_cards', []),
-            removed_cards=data.get('removed_cards', [])
-        )
-        
-        GAME_METRICS.labels(type='training_move').inc()
-        
-        return jsonify({
-            'status': 'ok',
-            'move': move_result['move'],
-            'statistics': move_result['statistics']
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in training distribution: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/training/stats', methods=['GET'])
-def get_training_stats():
-    """Возвращает статистику текущей сессии тренировки"""
-    if current_training_session is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active training session'
-        }), 400
-
-    try:
-        stats = current_training_session.get_statistics()
-        return jsonify({
-            'status': 'ok',
-            'statistics': stats
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting training stats: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
 @app.route('/api/game/statistics')
 def get_game_statistics():
     """Возвращает текущую статистику игры"""
@@ -341,6 +261,57 @@ def get_move_recommendations():
             'message': str(e)
         }), 500
 
+@app.route('/api/training/start', methods=['POST'])
+def start_training():
+    """Начинает новую сессию тренировки"""
+    global current_training_session
+    
+    try:
+        data = request.get_json()
+        config = TrainingConfig(
+            fantasy_mode=data.get('fantasy_mode', False),
+            progressive_fantasy=data.get('progressive_fantasy', False),
+            time_limit=data.get('time_limit', 30)
+        )
+        
+        current_training_session = TrainingSession(config)
+        GAME_METRICS.labels(type='training_start').inc()
+        
+        return jsonify({
+            'status': 'ok',
+            'session_id': current_training_session.id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting training session: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/training/stats', methods=['GET'])
+def get_training_stats():
+    """Возвращает статистику текущей сессии тренировки"""
+    if current_training_session is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'No active training session'
+        }), 400
+
+    try:
+        stats = current_training_session.get_statistics()
+        return jsonify({
+            'status': 'ok',
+            'statistics': stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting training stats: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/api/health')
 def health_check():
     """Проверка здоровья приложения"""
@@ -387,36 +358,9 @@ def _get_game_state():
 
     return state
 
-@app.errorhandler(404)
-def not_found_error(error):
-    """Обработчик ошибки 404"""
-    return jsonify({
-        'status': 'error',
-        'message': 'Resource not found'
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    """Обработчик ошибки 500"""
-    logger.error(f"Internal server error: {error}")
-    return jsonify({
-        'status': 'error',
-        'message': 'Internal server error'
-    }), 500
-
-def main():
-    """Точка входа для запуска веб-приложения"""
-    port = int(os.environ.get('PORT', 5000))
-    debug = config.get('web.debug', False)
-    
-    # Инициализация менеджера статистики
-    statistics_manager.initialize()
-    
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=debug
-    )
+# Точка входа для gunicorn
+app.config['JSON_SORT_KEYS'] = False  # Отключаем сортировку ключей в JSON для лучшей читаемости
 
 if __name__ == '__main__':
-    main()
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
