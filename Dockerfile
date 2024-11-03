@@ -3,6 +3,9 @@ FROM python:3.8-slim
 # Установить рабочую директорию
 WORKDIR /app
 
+# Обновляем pip
+RUN pip install --upgrade pip
+
 # Копируем зависимости
 COPY requirements/prod.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
