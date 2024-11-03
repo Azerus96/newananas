@@ -5,8 +5,8 @@ from collections import defaultdict
 import numpy as np
 from datetime import datetime
 
-from ..core.card import Card
-from ..core.board import Street, Board
+from core.card import Card
+from core.board import Street, Board
 
 class CardStatistics:
     """Класс для хранения статистики по картам"""
