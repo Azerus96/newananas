@@ -6,11 +6,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..base import BaseAgent
-from ...core.card import Card
-from ...core.board import Board, Street
-from ...core.fantasy import FantasyMode
-from ...utils.logger import get_logger
+from base import BaseAgent
+from core.card import Card
+from core.board import Board, Street
+from core.fantasy import FantasyMode
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
