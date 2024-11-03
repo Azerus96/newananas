@@ -1,6 +1,6 @@
 from typing import List
-from ..core.card import Card
-from .evaluator import HandEvaluator
+from core.card import Card
+from evaluator import HandEvaluator
 
 class RoyaltyCalculator:
     """Калькулятор бонусных очков (роялти)"""
