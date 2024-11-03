@@ -178,7 +178,6 @@ class CardTracker:
             )
         }
     
-    def # analytics/card_tracker.py (продолжение)
 
     def get_overall_statistics(self) -> Dict:
         """Возвращает общую статистику по всем картам"""
