@@ -10,3 +10,4 @@ matplotlib==3.3.4  # Можно обновить
 pyyaml==5.4.1  # Обновить для безопасности
 flask-socketio==5.0.1
 requests==2.25.1
+werkzeug==2.0.3
