@@ -1,6 +1,6 @@
 # agents/rl/fantasy_agent.py
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import torch
 import torch.nn as nn
