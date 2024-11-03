@@ -9,7 +9,7 @@ from core.deck import Deck
 from core.fantasy import FantasyMode, FantasyManager, FantasyStrategy
 from analytics.analytics_manager import AnalyticsManager
 from agents.base import BaseAgent
-from agents.fantasy import FantasyAgent
+from agents.rl.fantasy_agent import FantasyAgent
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
