@@ -5,8 +5,8 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 from tensorflow.keras.optimizers import Adam
 import threading
 
-from .base import RLAgent
-from ...utils.logger import get_logger
+from base import RLAgent
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
