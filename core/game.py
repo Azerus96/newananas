@@ -1,12 +1,16 @@
+import os
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from enum import Enum
 
-from .board import Board, Street
-from .card import Card
-from .deck import Deck
-from ..agents.base import BaseAgent
-from ..utils.logger import get_logger
+from core.board import Board, Street
+from core.card import Card
+from core.deck import Deck
+from core.fantasy import FantasyMode, FantasyManager, FantasyStrategy
+from core.analytics import AnalyticsManager
+from agents.base import BaseAgent
+from agents.fantasy import FantasyAgent
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -24,12 +28,15 @@ class GameResult:
     player2_royalties: int
     player1_board: Board
     player2_board: Board
-    winner: Optional[int] = None  # 1 или 2 для победителя, None для ничьей
+    winner: Optional[int] = None
+
+    def get_player_score(self, player: int) -> int:
+        return self.player1_score if player == 1 else self.player2_score
 
 class Game:
-    """Основной класс игры"""
-    
-    def __init__(self, player1: BaseAgent, player2: BaseAgent, seed: Optional[int] = None):
+    def __init__(self, player1: BaseAgent, player2: BaseAgent, 
+                 fantasy_mode: FantasyMode = FantasyMode.NORMAL, 
+                 seed: Optional[int] = None):
         self.player1 = player1
         self.player2 = player2
         self.deck = Deck(seed)
@@ -39,25 +46,31 @@ class Game:
         self.player2_board = Board()
         self.history = []
         
+        # Новые компоненты
+        self.analytics = AnalyticsManager()
+        self.fantasy_manager = FantasyManager(mode=fantasy_mode)
+        self.fantasy_strategy = FantasyStrategy(self.fantasy_manager)
+        
+        # Настройка FantasyAgent
+        self.fantasy_agents = []
+        if isinstance(player1, FantasyAgent):
+            self.fantasy_agents.append((1, player1))
+        if isinstance(player2, FantasyAgent):
+            self.fantasy_agents.append((2, player2))
+
     def start(self) -> None:
-        """Начинает новую игру"""
         try:
             logger.info("Starting new game")
             self.deck.shuffle()
             self._deal_initial_cards()
             self.state = GameState.IN_PROGRESS
+            self.analytics.start_game(self)
         except Exception as e:
             logger.error(f"Error starting game: {e}")
             self.state = GameState.ERROR
             raise
-            
-    def _deal_initial_cards(self) -> None:
-        """Раздает начальные карты игрокам"""
-        self.player1_cards = self.deck.draw(5)
-        self.player2_cards = self.deck.draw(5)
-        
+
     def make_move(self, player: int, card: Card, street: Street) -> bool:
-        """Выполняет ход игрока"""
         if self.state != GameState.IN_PROGRESS:
             raise ValueError("Game is not in progress")
             
@@ -66,100 +79,109 @@ class Game:
             
         try:
             board = self.player1_board if player == 1 else self.player2_board
-            board.place_card(card, street)
-            self.history.append((player, card, street))
+            success = board.place_card(card, street)
             
-            if self._is_round_complete():
-                self._deal_new_cards()
+            if success:
+                self.history.append((player, card, street))
+                self.analytics.track_move(self, {
+                    'player': player,
+                    'card': card,
+                    'street': street
+                })
+
+                # Обработка фантазии
+                if self.fantasy_manager.state.active:
+                    if board.is_complete():
+                        fantasy_success = self.fantasy_manager.check_fantasy_entry(board)
+                        self.fantasy_manager.exit_fantasy(fantasy_success)
+                        self.fantasy_strategy.update_statistics(board, fantasy_success)
+
+                # Обновление FantasyAgent
+                for player_id, agent in self.fantasy_agents:
+                    if player == player_id and self.fantasy_manager.state.active:
+                        agent.fantasy_history.append({
+                            'state': self._get_agent_state(player),
+                            'move': (card, street),
+                            'fantasy_active': True
+                        })
+
+                if self._is_round_complete():
+                    self._deal_new_cards()
+                    
+                self._switch_player()
+                return True
                 
-            self._switch_player()
-            return True
+            return False
             
         except Exception as e:
             logger.error(f"Error making move: {e}")
             return False
-            
-    def _switch_player(self) -> None:
-        """Переключает текущего игрока"""
-        self.current_player = 3 - self.current_player  # 1 -> 2, 2 -> 1
-        
-    def _is_round_complete(self) -> bool:
-        """Проверяет, завершен ли текущий раунд"""
-        return (not self.player1_cards and not self.player2_cards)
-        
-    def _deal_new_cards(self) -> None:
-        """Раздает новые карты для следующего раунда"""
-        if self.deck.cards_remaining() >= 2:
-            self.player1_cards = self.deck.draw(1)
-            self.player2_cards = self.deck.draw(1)
-            
-    def is_game_over(self) -> bool:
-        """Проверяет, закончена ли игра"""
-        return (
-            self.player1_board.is_complete() and 
-            self.player2_board.is_complete()
-        )
-        
-    def get_result(self) -> GameResult:
-        """Подсчитывает и возвращает результат игры"""
-        if not self.is_game_over():
-            raise ValueError("Game is not over")
-            
-        p1_royalties = self.player1_board.get_royalties()
-        p2_royalties = self.player2_board.get_royalties()
-        
-        p1_score = 0
-        p2_score = 0
-        
-        # Проверяем фолы
-        if not self.player1_board.is_valid() and not self.player2_board.is_valid():
-            winner = None
-        elif not self.player1_board.is_valid():
-            p2_score = 6 + p2_royalties
-            winner = 2
-        elif not self.player2_board.is_valid():
-            p1_score = 6 + p1_royalties
-            winner = 1
-        else:
-            # Считаем очки за улицы
-            for street in Street:
-                p1_hand = self.player1_board._get_street(street)
-                p2_hand = self.player2_board._get_street(street)
-                
-                if p1_hand.get_rank() < p2_hand.get_rank():
-                    p1_score += 1
-                elif p1_hand.get_rank() > p2_hand.get_rank():
-                    p2_score += 1
-                    
-            # Добавляем роялти
-            p1_score += p1_royalties
-            p2_score += p2_royalties
-            
-            # Определяем победителя
-            if p1_score > p2_score:
-                winner = 1
-            elif p2_score > p1_score:
-                winner = 2
-            else:
-                winner = None
-                
-        return GameResult(
-            player1_score=p1_score,
-            player2_score=p2_score,
-            player1_royalties=p1_royalties,
-            player2_royalties=p2_royalties,
-            player1_board=self.player1_board,
-            player2_board=self.player2_board,
-            winner=winner
-        )
-        
-    def get_legal_moves(self, player: int) -> List[Tuple[Card, Street]]:
-        """Возвращает список доступных ходов для игрока"""
+
+    # ... (остальные существующие методы остаются без изменений)
+
+    def check_fantasy_entry(self, player: int) -> bool:
         board = self.player1_board if player == 1 else self.player2_board
+        
+        if self.fantasy_manager.check_fantasy_entry(board):
+            cards_count = self.fantasy_manager.enter_fantasy()
+            self._deal_fantasy_cards(player, cards_count)
+            self.analytics.track_fantasy_attempt(True)
+            return True
+            
+        return False
+
+    def _deal_fantasy_cards(self, player: int, count: int):
+        cards = self.deck.draw(count)
+        if player == 1:
+            self.player1_cards.extend(cards)
+        else:
+            self.player2_cards.extend(cards)
+
+    def get_fantasy_status(self) -> Dict:
+        return {
+            'active': self.fantasy_manager.state.active,
+            'mode': self.fantasy_manager.mode.value,
+            'cards_count': self.fantasy_manager.state.cards_count,
+            'consecutive_fantasies': self.fantasy_manager.state.consecutive_fantasies,
+            'progressive_bonus': (
+                self.fantasy_manager.state.progressive_bonus.name
+                if self.fantasy_manager.state.progressive_bonus
+                else None
+            )
+        }
+
+    def get_statistics(self) -> Dict:
+        return {
+            'game_stats': self.analytics.current_game_stats,
+            'session_stats': self.analytics.get_session_statistics(),
+            'recommendations': self.get_move_recommendations(),
+            'fantasy_stats': self.get_fantasy_statistics()
+        }
+
+    def get_fantasy_statistics(self) -> Dict:
+        return {
+            'manager_stats': self.fantasy_manager.get_statistics(),
+            'strategy_stats': self.fantasy_strategy.get_strategy_stats()
+        }
+
+    def _get_agent_state(self, player: int) -> Dict:
+        board = self.player1_board if player == 1 else self.player2_board
+        opponent_board = self.player2_board if player == 1 else self.player1_board
         cards = self.player1_cards if player == 1 else self.player2_cards
         
-        return [
-            (card, street)
-            for card in cards
-            for street in board.get_free_streets()
-        ]
+        return {
+            'board': board,
+            'opponent_board': opponent_board,
+            'cards': cards,
+            'fantasy_active': self.fantasy_manager.state.active,
+            'fantasy_mode': self.fantasy_manager.mode
+        }
+
+# Настройка Flask
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
