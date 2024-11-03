@@ -1,9 +1,9 @@
 import random
 from typing import Tuple, List, Optional
 
-from .base import BaseAgent
-from ..core.card import Card
-from ..core.board import Street, Board
+from base import BaseAgent
+from core.card import Card
+from core.board import Street, Board
 
 class RandomAgent(BaseAgent):
     """Агент, делающий случайные ходы"""
