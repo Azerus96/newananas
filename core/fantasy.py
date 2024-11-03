@@ -183,9 +183,6 @@ class FantasyStrategy:
         return f"{street.name}_{len(street_cards)}_{board.get_royalties()}"
 
     def update_statistics(self, board: Board, success: bool):
-        # core/fantasy.py (продолжение)
-
-    def update_statistics(self, board: Board, success: bool):
         """Обновляет статистику успешности паттернов"""
         for street in Street:
             pattern = self._get_board_pattern(board, street)
