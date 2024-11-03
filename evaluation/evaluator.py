@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 from functools import lru_cache
 
-from ..core.card import Card, Rank, Suit
+from core.card import Card, Rank, Suit
 
 class HandEvaluator:
     """Оценщик покерных комбинаций"""
