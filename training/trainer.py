@@ -4,10 +4,10 @@ from datetime import datetime
 import json
 import os
 
-from ..agents.base import BaseAgent
-from ..core.game import Game
-from ..utils.logger import get_logger
-from ..utils.config import Config
+from agents.base import BaseAgent
+from core.game import Game
+from utils.logger import get_logger
+from utils.config import Config
 
 logger = get_logger(__name__)
 
