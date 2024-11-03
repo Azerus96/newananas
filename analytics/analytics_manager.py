@@ -1,14 +1,17 @@
 # analytics/analytics_manager.py
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List, TYPE_CHECKING
 from pathlib import Path
 import json
 import threading
 from datetime import datetime
 
 from analytics.card_tracker import CardTracker
-from core.game import Game, GameResult
 from utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from core.game import Game, GameResult
+    from core.card import Card
 
 logger = get_logger(__name__)
 
@@ -41,7 +44,7 @@ class AnalyticsManager:
         except Exception as e:
             logger.error(f"Error loading existing statistics: {e}")
     
-    def start_game(self, game: Game):
+    def start_game(self, game: 'Game'):
         """Начинает отслеживание новой игры"""
         with self._lock:
             self.current_game_stats = {
@@ -52,7 +55,7 @@ class AnalyticsManager:
             }
             self.session_stats['games_played'] += 1
     
-    def track_move(self, game: Game, move: Dict):
+    def track_move(self, game: 'Game', move: Dict):
         """Отслеживает ход в игре"""
         with self._lock:
             self.current_game_stats['moves'].append({
@@ -72,7 +75,7 @@ class AnalyticsManager:
             if success:
                 self.session_stats['fantasies'] += 1
     
-    def end_game(self, result: GameResult):
+    def end_game(self, result: 'GameResult'):
         """Завершает отслеживание игры"""
         with self._lock:
             game_stats = {
@@ -102,7 +105,7 @@ class AnalyticsManager:
             
             return game_stats
     
-    def get_move_recommendations(self, game: Game, available_cards: List[Card]) -> Dict:
+    def get_move_recommendations(self, game: 'Game', available_cards: List['Card']) -> Dict:
         """Получает рекомендации по ходам"""
         with self._lock:
             return self.card_tracker.get_card_suggestions(
