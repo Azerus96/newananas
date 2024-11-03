@@ -38,7 +38,6 @@ class RoyaltyCalculator:
             if rank <= 10:  # Стрит-флеш
                 return 30
             if rank <= 166:  # Каре
-          if rank <= 166:  # Каре
                 return 20
             if rank <= 322:  # Фулл-хаус
                 return 12
