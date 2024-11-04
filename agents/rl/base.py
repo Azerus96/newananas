@@ -2,7 +2,7 @@ from abc import abstractmethod
 from typing import List, Tuple, Dict, Any
 import numpy as np
 
-from base import BaseAgent
+from agents.base import BaseAgent
 from core.card import Card
 from core.board import Board, Street
 from utils.logger import get_logger
