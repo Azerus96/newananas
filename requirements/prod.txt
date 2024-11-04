@@ -5,9 +5,12 @@ werkzeug==2.3.7
 gunicorn==21.2.0
 
 # ML/AI Dependencies
-numpy==1.24.3  # Обновлено
-pandas==2.0.3  # Обновлено
-tensorflow-cpu==2.14.0  # Обновлено
+numpy==1.24.3  # Важно: должно быть <1.25 для numba
+pandas==2.0.3
+tensorflow-cpu==2.14.0
+keras==2.14.0  # Явно указываем версию keras
+tensorboard==2.14.0  # Явно указываем версию tensorboard
+ml-dtypes==0.2.0  # Явно указываем версию ml-dtypes
 torch==2.0.1
 
 # Utils
