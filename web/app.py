@@ -25,6 +25,7 @@ from agents.random import RandomAgent
 from agents.rl.dqn import DQNAgent
 from agents.rl.a3c import A3CAgent
 from agents.rl.ppo import PPOAgent
+from agents.base import BaseAgent
 from agents.rl.fantasy_agent import FantasyAgent
 from training.training_mode import TrainingSession, TrainingConfig
 from analytics.statistics import StatisticsManager
