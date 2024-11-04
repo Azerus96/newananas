@@ -23,13 +23,11 @@ ENV PYTHONUNBUFFERED=1 \
 COPY requirements/prod.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip cache purge && \
     rm -rf ~/.cache/pip/* && \
     find /usr/local -type d -name __pycache__ -exec rm -rf {} +
 
 COPY . .
 RUN pip install -e . && \
-    pip cache purge && \
     rm -rf ~/.cache/pip/* && \
     find /usr/local -type d -name __pycache__ -exec rm -rf {} +
 
