@@ -1,7 +1,7 @@
 # training/training_mode.py
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict, Set, Tuple, Any
 from core.card import Card
 from core.board import Board, Street
 
