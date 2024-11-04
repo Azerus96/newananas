@@ -1,4 +1,3 @@
-# render.yaml
 services:
   - type: web
     name: newananas
@@ -10,18 +9,12 @@ services:
     numInstances: 1
     healthCheckPath: /api/health
     envVars:
-      - key: PORT
-        value: 10000
       - key: FLASK_ENV
         value: production
       - key: PYTHON_VERSION
         value: 3.9
       - key: PYTHONPATH
         value: /app
-      - key: TF_CPP_MIN_LOG_LEVEL
-        value: "3"
-      - key: CUDA_VISIBLE_DEVICES
-        value: "-1"
       - key: WORKERS
         value: "1"
       - key: TIMEOUT
@@ -33,7 +26,6 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements/prod.txt
-      python -c "import tensorflow as tf; tf.keras.backend.clear_session()"
     startCommand: gunicorn -c gunicorn_config.py web.app:app
     autoDeploy: true
     disk:
@@ -42,18 +34,8 @@ services:
       sizeGB: 1
     healthCheck:
       httpPath: /api/health
-      port: 10000
       initialDelaySeconds: 60
       periodSeconds: 60
       timeoutSeconds: 30
       successThreshold: 1
       failureThreshold: 3
-    metrics:
-      - port: 10000
-        path: /metrics
-    domains:
-      - newananas.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /
