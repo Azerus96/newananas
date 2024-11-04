@@ -38,44 +38,8 @@ RUN pip install -e .
 # Создание необходимых директорий
 RUN mkdir -p /app/logs /app/data
 
-# Создание gunicorn конфига
-RUN echo 'import os\n\
-import tensorflow as tf\n\
-\n\
-# Настройка TensorFlow\n\
-tf.get_logger().setLevel("ERROR")\n\
-tf.config.set_visible_devices([], "GPU")\n\
-\n\
-# Базовые настройки\n\
-bind = f"0.0.0.0:{os.getenv("PORT", "10000")}"\n\
-workers = int(os.getenv("WORKERS", "1"))\n\
-threads = 2\n\
-timeout = int(os.getenv("TIMEOUT", "300"))\n\
-\n\
-# Настройки воркера\n\
-worker_class = "gthread"\n\
-worker_connections = 1000\n\
-keepalive = 2\n\
-\n\
-# Логирование\n\
-accesslog = "-"\n\
-errorlog = "-"\n\
-loglevel = "info"\n\
-\n\
-# Предзагрузка приложения\n\
-preload_app = True\n\
-\n\
-def on_starting(server):\n\
-    import tensorflow as tf\n\
-    tf.keras.backend.clear_session()\n\
-\n\
-def post_fork(server, worker):\n\
-    import tensorflow as tf\n\
-    tf.keras.backend.clear_session()\n\
-\n\
-def on_exit(server):\n\
-    import tensorflow as tf\n\
-    tf.keras.backend.clear_session()' > /app/gunicorn_config.py
+# Копирование gunicorn конфига
+COPY gunicorn_config.py /app/gunicorn_config.py
 
 # Создание непривилегированного пользователя
 RUN useradd -m appuser && chown -R appuser:appuser /app
