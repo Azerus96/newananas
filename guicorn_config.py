@@ -6,7 +6,7 @@ tf.get_logger().setLevel('ERROR')
 tf.config.set_visible_devices([], 'GPU')
 
 # Базовые настройки
-bind = f"0.0.0.0:{os.getenv('PORT', '10000')}"
+bind = f"0.0.0.0:{os.getenv('PORT', '10000')}"  # Исправлены кавычки
 workers = 1  # Уменьшено количество воркеров для стабильности
 threads = 2
 timeout = 120
