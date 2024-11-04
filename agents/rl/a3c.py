@@ -4,8 +4,11 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Lambda
 from tensorflow.keras.optimizers import Adam
 import threading
+from typing import List, Tuple
 
-from base import RLAgent
+from agents.rl.base import RLAgent
+from core.board import Board, Street
+from core.card import Card
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -177,8 +180,8 @@ class A3CWorker(RLAgent):
         
         # Синхронизируем локальную модель с глобальной
         self.local_model.set_weights(self.global_model.get_weights())
-        
-     def _compute_returns(self, rewards: np.ndarray) -> np.ndarray:
+    
+    def _compute_returns(self, rewards: np.ndarray) -> np.ndarray:
         """Вычисляет возвраты с учетом дисконтирования"""
         returns = np.zeros_like(rewards)
         running_return = 0
@@ -188,7 +191,7 @@ class A3CWorker(RLAgent):
             returns[t] = running_return
             
         return returns
-        
+    
     def _compute_policy_loss(self, policies, actions, advantages):
         """Вычисляет функцию потерь политики"""
         actions_one_hot = tf.one_hot(actions, self.action_size)
@@ -196,14 +199,13 @@ class A3CWorker(RLAgent):
         log_probs = tf.math.log(action_probs + 1e-10)
         
         return -tf.reduce_mean(log_probs * advantages)
-        
+    
     def _compute_value_loss(self, values, returns):
         """Вычисляет функцию потерь значения"""
         return tf.reduce_mean(tf.square(returns - values))
-        
+    
     def _compute_entropy_loss(self, policies):
         """Вычисляет энтропию политики"""
         return -tf.reduce_mean(
             tf.reduce_sum(policies * tf.math.log(policies + 1e-10), axis=1)
         )
-        
