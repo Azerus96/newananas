@@ -6,7 +6,7 @@ from tensorflow.keras.optimizers import Adam
 
 from agents.rl.base import RLAgent
 from utils.logger import get_logger
-from core.board import Board  # или откуда у вас импортируется Board
+from core.board import Board, Street # или откуда у вас импортируется Board
 from typing import List
 from core.card import Card
 
