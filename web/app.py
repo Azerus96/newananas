@@ -66,7 +66,7 @@ REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method', 'end
 RESPONSE_TIME = Histogram('http_response_time_seconds', 'HTTP response time')
 GAME_METRICS = Counter('game_metrics_total', 'Game related metrics', ['type'])
 
-# Инициализация Flask с правильными настройками
+# Инициализация Flask
 app = Flask(__name__)
 app.config.update(
     JSON_SORT_KEYS=False,
@@ -196,7 +196,6 @@ def make_move():
         card = data.get('card')
         street = data.get('street')
 
-        # Выполняем ход игрока
         success = current_game.make_move(1, card, street)
         if not success:
             return jsonify({
@@ -204,14 +203,11 @@ def make_move():
                 'message': 'Invalid move'
             }), 400
 
-        # Если игра не закончена, делаем ход ИИ
         if not current_game.is_game_over():
             ai_move = current_game.get_ai_move()
             current_game.make_move(2, *ai_move)
 
         game_state = _get_game_state()
-        
-        # Обновляем статистику
         statistics_manager.update_game_stats(game_state)
         GAME_METRICS.labels(type='move').inc()
 
@@ -348,7 +344,6 @@ def get_training_stats():
 def health_check():
     """Расширенная проверка здоровья приложения"""
     try:
-        # Проверяем TensorFlow
         tf.keras.backend.clear_session()
         
         return jsonify({
@@ -357,8 +352,7 @@ def health_check():
             'game_active': current_game is not None,
             'training_active': current_training_session is not None,
             'tensorflow_status': 'ok',
-            'environment': app.env,
-            'port': os.environ.get('PORT', 10000)
+            'environment': app.env
         })
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -372,7 +366,7 @@ def _get_game_state():
     if current_game is None:
         return None
 
-    state = {
+    return {
         'player_board': {
             'front': [card.to_dict() for card in current_game.player1_board.front.cards],
             'middle': [card.to_dict() for card in current_game.player1_board.middle.cards],
@@ -387,23 +381,13 @@ def _get_game_state():
         'current_player': current_game.current_player,
         'is_game_over': current_game.is_game_over(),
         'fantasy_mode': current_game.fantasy_mode.value,
-        'removed_cards': [card.to_dict() for card in current_game.get_removed_cards()]
+        'removed_cards': [card.to_dict() for card in current_game.removed_cards]
     }
 
-    if state['is_game_over']:
-        result = current_game.get_result()
-        state['result'] = {
-            'winner': result.winner,
-            'player1_score': result.player1_score,
-            'player2_score': result.player2_score,
-            'player1_royalties': result.player1_royalties,
-            'player2_royalties': result.player2_royalties,
-            'fantasy_achieved': result.fantasy_achieved if hasattr(result, 'fantasy_achieved') else False
-        }
-
-    return state
-
-# Точка входа для gunicorn
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
+def main():
+    """Entry point for the application"""
+    port = int(os.getenv('PORT', '8080'))
     app.run(host='0.0.0.0', port=port)
+
+if __name__ == '__main__':
+    main()
