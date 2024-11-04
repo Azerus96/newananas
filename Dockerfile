@@ -1,3 +1,4 @@
+# Базовый образ
 FROM python:3.9
 
 # Установка рабочей директории
@@ -7,52 +8,86 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     python3-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Установка переменных окружения
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FLASK_ENV=production \
+    TF_CPP_MIN_LOG_LEVEL=3 \
+    CUDA_VISIBLE_DEVICES=-1 \
+    PORT=10000 \
+    PYTHONPATH=/app
+
 # Обновление pip
-RUN pip install --upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
 
 # Копирование requirements
-COPY requirements/prod.txt /app/requirements.txt
-
-# Установка зависимостей
+COPY requirements/prod.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Установка gunicorn
 RUN pip install gunicorn
 
-# Копирование всего проекта
-COPY . /app
+# Копирование исходного кода
+COPY . .
 
-# Установка нашего пакета
+# Установка пакета в development mode
 RUN pip install -e .
 
 # Создание необходимых директорий
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs /app/data
 
-# Установка переменных окружения
-ENV FLASK_APP=web/app.py
-ENV FLASK_ENV=production
-ENV PYTHONPATH=/app
-ENV TF_CPP_MIN_LOG_LEVEL=2
-ENV CUDA_VISIBLE_DEVICES=-1
-# Порт берем из переменных окружения Render
-ENV PORT=${PORT:-10000}
-
-# Открываем порт
-EXPOSE ${PORT}
-
-# Создаем gunicorn.conf.py
-RUN echo "import os\n\
-bind = f\"0.0.0.0:{os.environ.get('PORT', '10000')}\"\n\
-workers = 4\n\
+# Создание gunicorn конфига
+RUN echo 'import os\n\
+import tensorflow as tf\n\
+\n\
+# Настройка TensorFlow\n\
+tf.get_logger().setLevel("ERROR")\n\
+tf.config.set_visible_devices([], "GPU")\n\
+\n\
+# Базовые настройки\n\
+bind = f"0.0.0.0:{os.getenv("PORT", "10000")}"\n\
+workers = 1\n\
 threads = 2\n\
 timeout = 120\n\
-capture_output = True\n\
-enable_stdio_inheritance = True\n\
-accesslog = '-'\n\
-errorlog = '-'\n\
-loglevel = 'info'" > /app/gunicorn.conf.py
+\n\
+# Настройки воркера\n\
+worker_class = "gthread"\n\
+worker_connections = 1000\n\
+keepalive = 2\n\
+\n\
+# Логирование\n\
+accesslog = "-"\n\
+errorlog = "-"\n\
+loglevel = "info"\n\
+\n\
+# Предзагрузка приложения\n\
+preload_app = True\n\
+\n\
+def on_starting(server):\n\
+    tf.keras.backend.clear_session()\n\
+\n\
+def post_fork(server, worker):\n\
+    tf.keras.backend.clear_session()\n\
+\n\
+def on_exit(server):\n\
+    tf.keras.backend.clear_session()' > /app/gunicorn_config.py
 
-# Запуск через gunicorn
-CMD gunicorn -c gunicorn.conf.py web.app:app
+# Проверка конфигурации при сборке
+RUN python -c "import tensorflow as tf; tf.keras.backend.clear_session()"
+
+# Создание непривилегированного пользователя
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Открываем порт
+EXPOSE $PORT
+
+# Запуск приложения
+CMD ["gunicorn", "-c", "gunicorn_config.py", "web.app:app"]
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:$PORT/api/health || exit 1
