@@ -1,25 +1,31 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="newananas",  # Изменено с "rlofc" на "newananas"
+    name="newananas",
     version="1.0.0",
     description="Reinforcement Learning for Open Face Chinese Poker",
     author="Your Name",
     author_email="your.email@example.com",
-    packages=find_packages(exclude=["tests*"]),  # Исключаем тесты из установки
-    include_package_data=True,  # Включаем неисполняемые файлы (templates, static)
+    packages=find_packages(exclude=["tests*"]),
+    include_package_data=True,
     package_data={
-        'web': ['templates/*', 'static/*'],  # Указываем файлы для включения
+        'web': ['templates/*', 'static/*'],
     },
     install_requires=[
-        "numpy>=1.19.0",
-        "tensorflow>=2.4.0",
-        "keras>=2.4.0",
-        "flask>=2.0.0",
-        "matplotlib>=3.3.0",
-        "seaborn>=0.11.0",
-        "pyyaml>=5.4.0",
-        "deuces>=0.2.0",
+        "flask>=2.0.1",
+        "flask-cors>=3.0.10",
+        "werkzeug>=2.0.3",
+        "gunicorn>=20.1.0",
+        "numpy>=1.19.5",
+        "tensorflow-cpu>=2.5.0",  # Используем CPU версию
+        "torch>=1.7.1",
+        "seaborn>=0.11.2",
+        "matplotlib>=3.3.4",
+        "pyyaml>=5.4.1",
+        "requests>=2.25.1",
+        "python-dotenv>=0.19.0",
+        "prometheus-client>=0.17.1",
+        "flask-socketio>=5.0.1",
     ],
     extras_require={
         'dev': [
@@ -31,17 +37,16 @@ setup(
             'mypy>=0.790',
         ]
     },
-    python_requires='>=3.8',
+    python_requires='>=3.9',
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
     ],
     entry_points={
         'console_scripts': [
-            'newananas-web=web.app:main',  # Добавляем точку входа для веб-приложения
+            'newananas-web=web.app:main',
         ],
     },
 )
