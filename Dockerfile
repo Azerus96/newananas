@@ -1,4 +1,4 @@
-# Базовый образ
+# Dockerfile
 FROM python:3.9
 
 # Установка рабочей директории
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     python3-dev \
     libpq-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Установка переменных окружения
@@ -18,7 +19,9 @@ ENV PYTHONUNBUFFERED=1 \
     TF_CPP_MIN_LOG_LEVEL=3 \
     CUDA_VISIBLE_DEVICES=-1 \
     PORT=10000 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    WORKERS=1 \
+    TIMEOUT=300
 
 # Обновление pip
 RUN pip install --no-cache-dir --upgrade pip
@@ -49,9 +52,9 @@ tf.config.set_visible_devices([], "GPU")\n\
 \n\
 # Базовые настройки\n\
 bind = f"0.0.0.0:{os.getenv("PORT", "10000")}"\n\
-workers = 1\n\
+workers = int(os.getenv("WORKERS", "1"))\n\
 threads = 2\n\
-timeout = 120\n\
+timeout = int(os.getenv("TIMEOUT", "300"))\n\
 \n\
 # Настройки воркера\n\
 worker_class = "gthread"\n\
