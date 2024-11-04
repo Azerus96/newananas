@@ -1,4 +1,3 @@
-# Dockerfile
 FROM python:3.9
 
 # Установка рабочей директории
@@ -29,9 +28,6 @@ RUN pip install --no-cache-dir --upgrade pip
 # Копирование requirements
 COPY requirements/prod.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Установка gunicorn
-RUN pip install gunicorn
 
 # Копирование исходного кода
 COPY . .
@@ -70,16 +66,16 @@ loglevel = "info"\n\
 preload_app = True\n\
 \n\
 def on_starting(server):\n\
+    import tensorflow as tf\n\
     tf.keras.backend.clear_session()\n\
 \n\
 def post_fork(server, worker):\n\
+    import tensorflow as tf\n\
     tf.keras.backend.clear_session()\n\
 \n\
 def on_exit(server):\n\
+    import tensorflow as tf\n\
     tf.keras.backend.clear_session()' > /app/gunicorn_config.py
-
-# Проверка конфигурации при сборке
-RUN python -c "import tensorflow as tf; tf.keras.backend.clear_session()"
 
 # Создание непривилегированного пользователя
 RUN useradd -m appuser && chown -R appuser:appuser /app
