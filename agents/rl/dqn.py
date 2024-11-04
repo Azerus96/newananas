@@ -3,7 +3,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 
-from .base import RLAgent
+from agents.rl.base import RLAgent
 
 class DQNAgent(RLAgent):
     """Deep Q-Network агент"""
