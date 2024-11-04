@@ -3,11 +3,11 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras.optimizers import Adam
+from typing import List, Tuple, Optional, Dict, Any
 
 from agents.rl.base import RLAgent
 from utils.logger import get_logger
 from core.board import Board, Street # или откуда у вас импортируется Board
-from typing import List
 from core.card import Card
 
 logger = get_logger(__name__)
