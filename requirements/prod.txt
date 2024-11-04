@@ -5,13 +5,13 @@ werkzeug==2.3.7
 gunicorn==21.2.0
 
 # ML/AI Dependencies
-numpy==1.24.3  # Важно: должно быть <1.25 для numba
-pandas==2.0.3
-tensorflow-cpu==2.14.0
-keras==2.14.0  # Явно указываем версию keras
-tensorboard==2.14.0  # Явно указываем версию tensorboard
-ml-dtypes==0.2.0  # Явно указываем версию ml-dtypes
-torch==2.0.1
+numpy==1.23.5  # Совместима с Numba и scikit-learn
+pandas==1.5.3  # Совместима с NumPy 1.x
+tensorflow-cpu==2.14.0  # Версия TensorFlow, совместимая с NumPy 1.x
+keras==2.14.0  # Совместима с TensorFlow 2.14.0 и NumPy 1.x
+torch==2.0.1  # Совместима с NumPy 1.x
+ml-dtypes==0.2.0  # Совместима с TensorFlow 2.14.0
+tensorboard==2.14.0  # Совместима с TensorFlow 2.14.0
 
 # Utils
 pyyaml==6.0.1
@@ -25,7 +25,7 @@ newrelic==9.3.0
 sentry-sdk[flask]==1.31.0
 
 # Data Processing
-scikit-learn==1.3.1
+scikit-learn==1.3.1  # Совместима с NumPy 1.x
 
 # Optimization
-numba==0.57.1
+numba==0.56.4  # Совместима с NumPy 1.x
