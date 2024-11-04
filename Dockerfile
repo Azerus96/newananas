@@ -34,16 +34,25 @@ RUN mkdir -p /app/logs
 ENV FLASK_APP=web/app.py
 ENV FLASK_ENV=production
 ENV PYTHONPATH=/app
-ENV PORT=10000
+ENV TF_CPP_MIN_LOG_LEVEL=2
+ENV CUDA_VISIBLE_DEVICES=-1
+# Порт берем из переменных окружения Render
+ENV PORT=${PORT:-10000}
 
 # Открываем порт
-EXPOSE $PORT
+EXPOSE ${PORT}
+
+# Создаем gunicorn.conf.py
+RUN echo "import os\n\
+bind = f\"0.0.0.0:{os.environ.get('PORT', '10000')}\"\n\
+workers = 4\n\
+threads = 2\n\
+timeout = 120\n\
+capture_output = True\n\
+enable_stdio_inheritance = True\n\
+accesslog = '-'\n\
+errorlog = '-'\n\
+loglevel = 'info'" > /app/gunicorn.conf.py
 
 # Запуск через gunicorn
-CMD gunicorn --bind 0.0.0.0:$PORT \
-    --workers 4 \
-    --threads 2 \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile - \
-    web.app:app
+CMD gunicorn -c gunicorn.conf.py web.app:app
