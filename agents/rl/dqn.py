@@ -2,10 +2,10 @@ import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.optimizers import Adam
+from typing import List
 
 from agents.rl.base import RLAgent
 from core.board import Board, Street # или откуда у вас импортируется Board
-from typing import List
 from core.card import Card
 
 class DQNAgent(RLAgent):
