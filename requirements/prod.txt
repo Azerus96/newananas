@@ -5,9 +5,9 @@ werkzeug==2.3.7
 gunicorn==21.2.0
 
 # ML/AI Dependencies
-numpy==1.23.5  # Изменена версия
-pandas==1.5.3  # Изменена версия
-tensorflow-cpu==2.12.0  # Изменена версия
+numpy==1.24.3  # Обновлено
+pandas==2.0.3  # Обновлено
+tensorflow-cpu==2.14.0  # Обновлено
 torch==2.0.1
 
 # Utils
