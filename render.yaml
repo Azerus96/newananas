@@ -1,3 +1,4 @@
+# render.yaml
 services:
   - type: web
     name: newananas
@@ -21,8 +22,17 @@ services:
         value: "3"
       - key: CUDA_VISIBLE_DEVICES
         value: "-1"
+      - key: WORKERS
+        value: "1"
+      - key: TIMEOUT
+        value: "300"
+      - key: SENTRY_DSN
+        sync: false
+      - key: NEW_RELIC_LICENSE_KEY
+        sync: false
     buildCommand: |
-      pip install -e .
+      pip install --upgrade pip
+      pip install -r requirements/prod.txt
       python -c "import tensorflow as tf; tf.keras.backend.clear_session()"
     startCommand: gunicorn -c gunicorn_config.py web.app:app
     autoDeploy: true
@@ -33,7 +43,7 @@ services:
     healthCheck:
       httpPath: /api/health
       port: 10000
-      initialDelaySeconds: 60  # Увеличено время ожидания
+      initialDelaySeconds: 60
       periodSeconds: 60
       timeoutSeconds: 30
       successThreshold: 1
