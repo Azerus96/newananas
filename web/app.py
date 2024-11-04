@@ -1,6 +1,11 @@
 import sys
 import os
 from pathlib import Path
+import tensorflow as tf
+
+# Настройка TensorFlow
+tf.get_logger().setLevel('ERROR')
+tf.config.set_visible_devices([], 'GPU')
 
 # Добавляем корневую директорию проекта в PYTHONPATH
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -61,18 +66,26 @@ REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method', 'end
 RESPONSE_TIME = Histogram('http_response_time_seconds', 'HTTP response time')
 GAME_METRICS = Counter('game_metrics_total', 'Game related metrics', ['type'])
 
+# Инициализация Flask с правильными настройками
 app = Flask(__name__)
+app.config.update(
+    JSON_SORT_KEYS=False,
+    PROPAGATE_EXCEPTIONS=True,
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024  # 16MB max-limit
+)
 
 # Глобальные переменные для хранения состояния
 current_game: Optional[Game] = None
 current_training_session: Optional[TrainingSession] = None
 statistics_manager = StatisticsManager()
 
+# Middleware для логирования и метрик
 @app.before_request
 def before_request():
     """Выполняется перед каждым запросом"""
     g.start_time = datetime.now()
     REQUESTS.labels(method=request.method, endpoint=request.endpoint).inc()
+    app.logger.info(f'Request: {request.method} {request.url}')
 
 @app.after_request
 def after_request(response):
@@ -80,7 +93,26 @@ def after_request(response):
     if hasattr(g, 'start_time'):
         elapsed = datetime.now() - g.start_time
         RESPONSE_TIME.observe(elapsed.total_seconds())
+        app.logger.info(
+            f'Response: {response.status} - {elapsed.total_seconds():.3f}s'
+        )
     return response
+
+# Обработчики ошибок
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({
+        'status': 'error',
+        'message': 'Not Found'
+    }), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    app.logger.error(f'Server Error: {error}')
+    return jsonify({
+        'status': 'error',
+        'message': 'Internal Server Error'
+    }), 500
 
 @app.route('/')
 def index():
@@ -314,13 +346,26 @@ def get_training_stats():
 
 @app.route('/api/health')
 def health_check():
-    """Проверка здоровья приложения"""
-    return jsonify({
-        'status': 'ok',
-        'timestamp': datetime.now().isoformat(),
-        'game_active': current_game is not None,
-        'training_active': current_training_session is not None
-    })
+    """Расширенная проверка здоровья приложения"""
+    try:
+        # Проверяем TensorFlow
+        tf.keras.backend.clear_session()
+        
+        return jsonify({
+            'status': 'ok',
+            'timestamp': datetime.now().isoformat(),
+            'game_active': current_game is not None,
+            'training_active': current_training_session is not None,
+            'tensorflow_status': 'ok',
+            'environment': app.env,
+            'port': os.environ.get('PORT', 10000)
+        })
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 def _get_game_state():
     """Формирует словарь с текущим состоянием игры"""
@@ -359,8 +404,6 @@ def _get_game_state():
     return state
 
 # Точка входа для gunicorn
-app.config['JSON_SORT_KEYS'] = False  # Отключаем сортировку ключей в JSON для лучшей читаемости
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
