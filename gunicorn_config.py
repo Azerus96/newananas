@@ -9,10 +9,10 @@ tf.config.set_visible_devices([], 'GPU')
 port = os.getenv('PORT')
 if not port:
     raise ValueError('PORT environment variable is not set')
-bind = '0.0.0.0:' + port
+bind = f"0.0.0.0:{port}"
 
 workers = int(os.getenv('WORKERS', '1'))
-threads = 2
+threads = int(os.getenv('THREADS', '2'))
 timeout = int(os.getenv('TIMEOUT', '300'))
 
 # Настройки воркера
@@ -30,14 +30,18 @@ enable_stdio_inheritance = True
 # Предзагрузка приложения
 preload_app = True
 
+def _clear_tf_session():
+    """Централизованная очистка сессии TensorFlow"""
+    try:
+        tf.keras.backend.clear_session()
+    except:
+        pass
+
 def on_starting(server):
-    import tensorflow as tf
-    tf.keras.backend.clear_session()
+    _clear_tf_session()
 
 def post_fork(server, worker):
-    import tensorflow as tf
-    tf.keras.backend.clear_session()
+    _clear_tf_session()
 
 def on_exit(server):
-    import tensorflow as tf
-    tf.keras.backend.clear_session()
+    _clear_tf_session()
