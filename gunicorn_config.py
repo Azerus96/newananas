@@ -2,25 +2,30 @@ import os
 import tensorflow as tf
 
 # Настройка TensorFlow
-tf.get_logger().setLevel("ERROR")
-tf.config.set_visible_devices([], "GPU")
+tf.get_logger().setLevel('ERROR')
+tf.config.set_visible_devices([], 'GPU')
 
 # Базовые настройки
-port = os.getenv("PORT", "10000")
-bind = "0.0.0.0:" + port
-workers = int(os.getenv("WORKERS", "1"))
+port = os.getenv('PORT')
+if not port:
+    raise ValueError('PORT environment variable is not set')
+bind = '0.0.0.0:' + port
+
+workers = int(os.getenv('WORKERS', '1'))
 threads = 2
-timeout = int(os.getenv("TIMEOUT", "300"))
+timeout = int(os.getenv('TIMEOUT', '300'))
 
 # Настройки воркера
-worker_class = "gthread"
+worker_class = 'gthread'
 worker_connections = 1000
 keepalive = 2
 
 # Логирование
-accesslog = "-"
-errorlog = "-"
-loglevel = "info"
+accesslog = '-'
+errorlog = '-'
+loglevel = 'debug'
+capture_output = True
+enable_stdio_inheritance = True
 
 # Предзагрузка приложения
 preload_app = True
