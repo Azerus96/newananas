@@ -1,6 +1,6 @@
 # analytics/statistics.py
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from collections import defaultdict
 import numpy as np
@@ -14,8 +14,8 @@ class PlayerStats:
     fantasies_completed: int = 0
     fouls: int = 0
     royalties_earned: int = 0
-    best_combinations: Dict[str, int] = defaultdict(int)
-    points_history: List[int] = []
+    best_combinations: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    points_history: List[int] = field(default_factory=list)
 
 class StatisticsManager:
     def __init__(self):
@@ -83,10 +83,7 @@ class StatisticsManager:
 
     def export_statistics(self) -> pd.DataFrame:
         """Экспортирует статистику в pandas DataFrame"""
-        return pd.DataFrame([
-            {
-                'player_id': player_id,
-                **self.get_player_analytics(player_id)
-            }
-            for player_id in self.players_stats.keys()
-        ])
+        return pd.DataFrame([{
+            'player_id': player_id,
+            **self.get_player_analytics(player_id)
+        } for player_id in self.players_stats.keys()])
