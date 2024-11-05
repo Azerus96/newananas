@@ -79,6 +79,16 @@ class Card:
     def __repr__(self) -> str:
         return f"Card('{self.to_string()}')"
 
+    def to_dict(self):
+        """Convert card to dictionary representation"""
+        return {
+            'rank': self.rank.to_char(),
+            'suit': self.suit.to_char(),
+            'color': 'red' if self.suit in (Suit.HEARTS, Suit.DIAMONDS) else 'black',
+            'display': f"{self.rank.to_char()}{self.suit.to_char()}",
+            'id': f"{self.rank.to_char()}{self.suit.to_char()}"
+        }
+
     @property
     def prime_value(self) -> int:
         """Get prime number value for hand evaluation"""
@@ -99,3 +109,10 @@ class Card:
     def pretty_str(self) -> str:
         """Get formatted string for display"""
         return f"[{self.rank.to_char()} {self.suit.to_char()}]"
+
+    @classmethod
+    def get_all_cards(cls) -> List['Card']:
+        """Returns a list of all possible cards"""
+        return [cls(rank=rank, suit=suit) 
+                for rank in Rank 
+                for suit in Suit]
