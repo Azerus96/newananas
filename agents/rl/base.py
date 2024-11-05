@@ -1,6 +1,10 @@
 from abc import abstractmethod
 from typing import List, Tuple, Dict, Any
 import numpy as np
+from pathlib import Path
+import os
+import json
+from datetime import datetime
 
 from agents.base import BaseAgent
 from core.card import Card
@@ -31,7 +35,45 @@ class RLAgent(BaseAgent):
         
         self.model = self._build_model()
         self.training_history = []
+
+    @classmethod
+    def load_latest(cls, name: str, state_size: int, action_size: int, config: dict):
+        """Загружает последнюю сохраненную модель агента"""
+        agent = cls(name, state_size, action_size, config)
         
+        try:
+            # Определяем директорию с моделями для конкретного типа агента
+            model_dir = Path("models") / cls.__name__.lower()
+            if not model_dir.exists():
+                model_dir.mkdir(parents=True)
+                
+            # Ищем последний чекпоинт
+            checkpoints = list(model_dir.glob("*.h5"))
+            if not checkpoints:
+                logger.warning(f"No saved models found for {cls.__name__}")
+                return agent
+                
+            # Находим самую свежую модель
+            latest_model = max(checkpoints, key=lambda p: p.stat().st_mtime)
+            
+            # Загружаем модель
+            agent.load(str(latest_model))
+            
+            # Пытаемся загрузить метаданные
+            meta_path = latest_model.with_suffix('.json')
+            if meta_path.exists():
+                with open(meta_path, 'r') as f:
+                    metadata = json.load(f)
+                    agent.epsilon = metadata.get('epsilon', agent.epsilon_min)
+                    agent.training_history = metadata.get('training_history', [])
+            
+            logger.info(f"Loaded model: {latest_model}")
+            return agent
+            
+        except Exception as e:
+            logger.error(f"Error loading model for {cls.__name__}: {e}")
+            return agent
+
     @abstractmethod
     def _build_model(self):
         """Создает и возвращает модель"""
@@ -75,40 +117,41 @@ class RLAgent(BaseAgent):
             self.memory.pop(0)
         self.memory.append((state, action, reward, next_state, done))
         
-    def replay(self, batch_size: int) -> Dict[str, float]:
-        """Обучает модель на батче из памяти"""
-        if len(self.memory) < batch_size:
-            return {}
-            
-        batch = np.random.choice(self.memory, batch_size, replace=False)
-        states = np.array([x[0] for x in batch])
-        actions = np.array([x[1] for x in batch])
-        rewards = np.array([x[2] for x in batch])
-        next_states = np.array([x[3] for x in batch])
-        dones = np.array([x[4] for x in batch])
-        
-        # Обучение модели
-        targets = self.model.predict(states)
-        next_q_values = self.model.predict(next_states)
-        
-        for i in range(batch_size):
-            if dones[i]:
-                targets[i][actions[i]] = rewards[i]
-            else:
-                targets[i][actions[i]] = rewards[i] + self.gamma * np.max(next_q_values[i])
-                
-        history = self.model.fit(states, targets, epochs=1, verbose=0)
-        
-        # Обновление epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-            
-        return history.history
-        
     def save(self, filepath: str) -> None:
-        """Сохраняет модель"""
-        self.model.save(filepath)
+        """Сохраняет модель и метаданные"""
+        # Сохраняем модель
+        self.model.save(filepath + '.h5')
         
+        # Сохраняем метаданные
+        metadata = {
+            'epsilon': self.epsilon,
+            'training_history': self.training_history,
+            'timestamp': datetime.now().isoformat(),
+            'config': self.config
+        }
+        
+        with open(filepath + '.json', 'w') as f:
+            json.dump(metadata, f, indent=4)
+            
     def load(self, filepath: str) -> None:
-        """Загружает модель"""
-        self.model.load_weights(filepath)
+        """Загружает модель и метаданные"""
+        # Загружаем модель
+        self.model.load_weights(filepath + '.h5')
+        
+        # Загружаем метаданные
+        try:
+            with open(filepath + '.json', 'r') as f:
+                metadata = json.load(f)
+                self.epsilon = metadata.get('epsilon', self.epsilon_min)
+                self.training_history = metadata.get('training_history', [])
+                self.config.update(metadata.get('config', {}))
+        except FileNotFoundError:
+            logger.warning(f"No metadata file found for {filepath}")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Возвращает текущую статистику агента"""
+        return {
+            'epsilon': self.epsilon,
+            'memory_size': len(self.memory),
+            'training_history': self.training_history
+        }
