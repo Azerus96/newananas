@@ -12,8 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 from flask import Flask, render_template, jsonify, request, g
-from typing import Optional, Dict
-import json
+from typing import Optional
 from datetime import datetime
 from prometheus_client import Counter, Histogram
 from logging.config import dictConfig
@@ -29,7 +28,7 @@ from agents.base import BaseAgent
 from agents.rl.fantasy_agent import FantasyAgent
 from training.training_mode import TrainingSession, TrainingConfig
 from analytics.statistics import StatisticsManager
-from utils.config import config
+from utils.config import Config  # Импортируем класс Config
 from utils.logger import get_logger
 
 # Настройка логирования
@@ -61,6 +60,9 @@ dictConfig({
 })
 
 logger = get_logger(__name__)
+
+# Инициализация конфигурации
+config = Config()  # Создаем экземпляр конфигурации
 
 # Метрики Prometheus
 REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint'])
