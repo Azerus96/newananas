@@ -2,6 +2,11 @@ import sys
 import os
 from pathlib import Path
 import tensorflow as tf
+from datetime import datetime
+from prometheus_client import Counter, Histogram
+from logging.config import dictConfig
+from flask import Flask, render_template, jsonify, request, g
+from typing import Optional
 
 # Настройка TensorFlow
 tf.get_logger().setLevel('ERROR')
@@ -11,13 +16,7 @@ tf.config.set_visible_devices([], 'GPU')
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
-from flask import Flask, render_template, jsonify, request, g
-from typing import Optional
-from datetime import datetime
-from prometheus_client import Counter, Histogram
-from logging.config import dictConfig
-
-# Абсолютные импорты
+# Импорты
 from core.game import Game, GameState, GameResult
 from core.fantasy import FantasyMode
 from agents.random import RandomAgent
@@ -25,10 +24,8 @@ from agents.rl.dqn import DQNAgent
 from agents.rl.a3c import A3CAgent
 from agents.rl.ppo import PPOAgent
 from agents.base import BaseAgent
-from agents.rl.fantasy_agent import FantasyAgent
 from training.training_mode import TrainingSession, TrainingConfig
-from analytics.statistics import StatisticsManager
-from utils.config import Config  # Импортируем класс Config
+from utils.config import Config
 from utils.logger import get_logger
 
 # Настройка логирования
@@ -62,27 +59,33 @@ dictConfig({
 logger = get_logger(__name__)
 
 # Инициализация конфигурации
-config = Config()  # Создаем экземпляр конфигурации
+config = Config()
 
 # Метрики Prometheus
 REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint'])
 RESPONSE_TIME = Histogram('http_response_time_seconds', 'HTTP response time')
 GAME_METRICS = Counter('game_metrics_total', 'Game related metrics', ['type'])
 
+# Доступные агенты
+AVAILABLE_AGENTS = {
+    'random': RandomAgent,
+    'dqn': DQNAgent,
+    'a3c': A3CAgent,
+    'ppo': PPOAgent
+}
+
 # Инициализация Flask
 app = Flask(__name__)
 app.config.update(
     JSON_SORT_KEYS=False,
     PROPAGATE_EXCEPTIONS=True,
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024  # 16MB max-limit
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024
 )
 
-# Глобальные переменные для хранения состояния
+# Глобальные переменные
 current_game: Optional[Game] = None
 current_training_session: Optional[TrainingSession] = None
-statistics_manager = StatisticsManager()
 
-# Middleware для логирования и метрик
 @app.before_request
 def before_request():
     """Выполняется перед каждым запросом"""
@@ -101,22 +104,6 @@ def after_request(response):
         )
     return response
 
-# Обработчики ошибок
-@app.errorhandler(404)
-def not_found_error(error):
-    return jsonify({
-        'status': 'error',
-        'message': 'Not Found'
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    app.logger.error(f'Server Error: {error}')
-    return jsonify({
-        'status': 'error',
-        'message': 'Internal Server Error'
-    }), 500
-
 @app.route('/')
 def index():
     """Отображает главную страницу"""
@@ -126,6 +113,20 @@ def index():
 def training():
     """Отображает страницу режима тренировки"""
     return render_template('training.html')
+
+@app.route('/api/agents')
+def get_available_agents():
+    """Возвращает список доступных агентов"""
+    return jsonify({
+        'agents': [
+            {
+                'id': agent_id,
+                'name': agent_class.__name__,
+                'description': agent_class.__doc__
+            }
+            for agent_id, agent_class in AVAILABLE_AGENTS.items()
+        ]
+    })
 
 @app.route('/api/new_game', methods=['POST'])
 def new_game():
@@ -137,14 +138,21 @@ def new_game():
         opponent_type = data.get('opponent_type', 'random')
         fantasy_mode = FantasyMode.PROGRESSIVE if data.get('progressive_fantasy') else FantasyMode.NORMAL
         
-        # Создаем противника
-        opponent = create_opponent(opponent_type)
-        if not opponent:
+        if opponent_type not in AVAILABLE_AGENTS:
             return jsonify({
                 'status': 'error',
                 'message': f'Unknown opponent type: {opponent_type}'
             }), 400
-
+            
+        # Создаем агента
+        agent_class = AVAILABLE_AGENTS[opponent_type]
+        opponent = agent_class.load_latest(
+            name=opponent_type,
+            state_size=config.get('state_size'),
+            action_size=config.get('action_size'),
+            config=config.get('agent_config')
+        )
+        
         # Создаем новую игру
         current_game = Game(
             player1=None,  # Человек
@@ -157,7 +165,7 @@ def new_game():
         
         return jsonify({
             'status': 'ok',
-            'game_state': _get_game_state()
+            'game_state': current_game.get_state()
         })
         
     except Exception as e:
@@ -166,24 +174,6 @@ def new_game():
             'status': 'error',
             'message': str(e)
         }), 500
-
-def create_opponent(opponent_type: str) -> Optional[BaseAgent]:
-    """Создает противника заданного типа"""
-    try:
-        if opponent_type == 'random':
-            return RandomAgent()
-        elif opponent_type == 'dqn':
-            return DQNAgent.load_latest()
-        elif opponent_type == 'a3c':
-            return A3CAgent.load_latest()
-        elif opponent_type == 'ppo':
-            return PPOAgent.load_latest()
-        elif opponent_type == 'fantasy':
-            return FantasyAgent.load_latest()
-        return None
-    except Exception as e:
-        logger.error(f"Error creating opponent: {e}")
-        return None
 
 @app.route('/api/make_move', methods=['POST'])
 def make_move():
@@ -210,8 +200,7 @@ def make_move():
             ai_move = current_game.get_ai_move()
             current_game.make_move(2, *ai_move)
 
-        game_state = _get_game_state()
-        statistics_manager.update_game_stats(game_state)
+        game_state = current_game.get_state()
         GAME_METRICS.labels(type='move').inc()
 
         return jsonify({
@@ -221,72 +210,6 @@ def make_move():
 
     except Exception as e:
         logger.error(f"Error making move: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/game/statistics')
-def get_game_statistics():
-    """Возвращает текущую статистику игры"""
-    if current_game is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active game'
-        }), 400
-
-    try:
-        statistics = statistics_manager.get_game_statistics()
-        return jsonify({
-            'status': 'ok',
-            'statistics': statistics
-        })
-    except Exception as e:
-        logger.error(f"Error getting game statistics: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/game/fantasy_status')
-def get_fantasy_status():
-    """Возвращает текущий статус фантазии"""
-    if current_game is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active game'
-        }), 400
-
-    try:
-        return jsonify({
-            'status': 'ok',
-            'fantasy_status': current_game.get_fantasy_status(),
-            'fantasy_statistics': current_game.get_fantasy_statistics()
-        })
-    except Exception as e:
-        logger.error(f"Error getting fantasy status: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/game/recommendations')
-def get_move_recommendations():
-    """Возвращает рекомендации по ходам"""
-    if current_game is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active game'
-        }), 400
-
-    try:
-        recommendations = current_game.get_move_recommendations()
-        return jsonify({
-            'status': 'ok',
-            'recommendations': recommendations
-        })
-    except Exception as e:
-        logger.error(f"Error getting move recommendations: {e}")
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -320,32 +243,66 @@ def start_training():
             'message': str(e)
         }), 500
 
-@app.route('/api/training/stats', methods=['GET'])
-def get_training_stats():
-    """Возвращает статистику текущей сессии тренировки"""
-    if current_training_session is None:
-        return jsonify({
-            'status': 'error',
-            'message': 'No active training session'
-        }), 400
-
+@app.route('/api/training/distribute', methods=['POST'])
+def distribute_cards():
+    """Распределяет карты в тренировочном режиме"""
     try:
-        stats = current_training_session.get_statistics()
+        if not current_training_session:
+            return jsonify({
+                'status': 'error',
+                'message': 'No active training session'
+            }), 400
+
+        data = request.get_json()
+        input_cards = data.get('input_cards', [])
+        removed_cards = data.get('removed_cards', [])
+        
+        move_result = current_training_session.make_move()
+        
         return jsonify({
             'status': 'ok',
-            'statistics': stats
+            'move': move_result,
+            'statistics': current_training_session.get_statistics()
         })
         
     except Exception as e:
-        logger.error(f"Error getting training stats: {e}")
+        logger.error(f"Error in training mode: {e}")
         return jsonify({
             'status': 'error',
             'message': str(e)
         }), 500
 
+@app.route('/api/training/stats')
+def get_training_stats():
+    """Получает статистику тренировки"""
+    if not current_training_session:
+        return jsonify({
+            'status': 'error',
+            'message': 'No active training session'
+        }), 400
+        
+    return jsonify({
+        'status': 'ok',
+        'statistics': current_training_session.get_statistics()
+    })
+
+@app.route('/api/game/state')
+def get_game_state():
+    """Получает текущее состояние игры"""
+    if not current_game:
+        return jsonify({
+            'status': 'error',
+            'message': 'No active game'
+        }), 400
+        
+    return jsonify({
+        'status': 'ok',
+        'game_state': current_game.get_state()
+    })
+
 @app.route('/api/health')
 def health_check():
-    """Расширенная проверка здоровья приложения"""
+    """Проверка здоровья приложения"""
     try:
         tf.keras.backend.clear_session()
         
@@ -355,7 +312,8 @@ def health_check():
             'game_active': current_game is not None,
             'training_active': current_training_session is not None,
             'tensorflow_status': 'ok',
-            'environment': app.env
+            'environment': app.env,
+            'available_agents': list(AVAILABLE_AGENTS.keys())
         })
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -364,33 +322,6 @@ def health_check():
             'message': str(e)
         }), 500
 
-def _get_game_state():
-    """Формирует словарь с текущим состоянием игры"""
-    if current_game is None:
-        return None
-
-    return {
-        'player_board': {
-            'front': [card.to_dict() for card in current_game.player1_board.front.cards],
-            'middle': [card.to_dict() for card in current_game.player1_board.middle.cards],
-            'back': [card.to_dict() for card in current_game.player1_board.back.cards]
-        },
-        'opponent_board': {
-            'front': [card.to_dict() for card in current_game.player2_board.front.cards],
-            'middle': [card.to_dict() for card in current_game.player2_board.middle.cards],
-            'back': [card.to_dict() for card in current_game.player2_board.back.cards]
-        },
-        'player_cards': [card.to_dict() for card in current_game.player1_cards],
-        'current_player': current_game.current_player,
-        'is_game_over': current_game.is_game_over(),
-        'fantasy_mode': current_game.fantasy_mode.value,
-        'removed_cards': [card.to_dict() for card in current_game.removed_cards]
-    }
-
-def main():
-    """Entry point for the application"""
-    port = int(os.getenv('PORT', '8080'))
-    app.run(host='0.0.0.0', port=port)
-
 if __name__ == '__main__':
-    main()
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
