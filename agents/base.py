@@ -1,159 +1,157 @@
-from abc import ABC, abstractmethod
-from typing import Tuple, List, Optional, Dict, Any
+from abc import abstractmethod
+from typing import List, Tuple, Dict, Any
 import numpy as np
+from pathlib import Path
+import os
+import json
+from datetime import datetime
 
+from agents.base import BaseAgent
 from core.card import Card
-from core.board import Street, Board
+from core.board import Board, Street
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-class BaseAgent(ABC):
-    """Базовый класс для всех агентов"""
+class RLAgent(BaseAgent):
+    """Базовый класс для RL агентов"""
     
-    def __init__(self, name: str = "Agent"):
-        self.name = name
-        self.reset_stats()
-        self.logger = get_logger(f"Agent_{name}")
+    def __init__(self, name: str, state_size: int, action_size: int, config: dict):
+        super().__init__(name)
+        self.state_size = state_size
+        self.action_size = action_size
+        self.config = config
         
-    @abstractmethod
-    def choose_move(self, 
-                   board: Board,
-                   cards: List[Card],
-                   legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Optional[Board] = None) -> Tuple[Card, Street]:
-        """
-        Выбирает ход из списка доступных
+        # Параметры обучения
+        self.gamma = config.get('gamma', 0.99)
+        self.learning_rate = config.get('learning_rate', 0.001)
+        self.epsilon = config.get('epsilon_start', 1.0)
+        self.epsilon_min = config.get('epsilon_end', 0.01)
+        self.epsilon_decay = config.get('epsilon_decay', 0.995)
         
-        Args:
-            board: Текущая доска агента
-            cards: Карты в руке агента
-            legal_moves: Список доступных ходов
-            opponent_board: Доска противника (если видима)
+        # Память для experience replay
+        self.memory = []
+        self.max_memory_size = config.get('memory_size', 10000)
+        
+        self.model = self._build_model()
+        self.training_history = []
+
+    @classmethod
+    def load_latest(cls, name: str, state_size: int, action_size: int, config: dict):
+        """Загружает последнюю сохраненную модель агента"""
+        agent = cls(name, state_size, action_size, config)
+        
+        try:
+            # Определяем директорию с моделями для конкретного типа агента
+            model_dir = Path("models") / cls.__name__.lower()
+            if not model_dir.exists():
+                model_dir.mkdir(parents=True)
+                
+            # Ищем последний чекпоинт
+            checkpoints = list(model_dir.glob("*.h5"))
+            if not checkpoints:
+                logger.warning(f"No saved models found for {cls.__name__}")
+                return agent
+                
+            # Находим самую свежую модель
+            latest_model = max(checkpoints, key=lambda p: p.stat().st_mtime)
             
-        Returns:
-            Tuple[Card, Street]: Выбранные карта и улица для хода
-        """
+            # Загружаем модель
+            agent.load(str(latest_model))
+            
+            # Пытаемся загрузить метаданные
+            meta_path = latest_model.with_suffix('.json')
+            if meta_path.exists():
+                with open(meta_path, 'r') as f:
+                    metadata = json.load(f)
+                    agent.epsilon = metadata.get('epsilon', agent.epsilon_min)
+                    agent.training_history = metadata.get('training_history', [])
+            
+            logger.info(f"Loaded model: {latest_model}")
+            return agent
+            
+        except Exception as e:
+            logger.error(f"Error loading model for {cls.__name__}: {e}")
+            return agent
+
+    @abstractmethod
+    def _build_model(self):
+        """Создает и возвращает модель"""
         pass
         
-    def notify_game_start(self, initial_cards: List[Card]) -> None:
-        """
-        Уведомляет агента о начале новой игры
+    @abstractmethod
+    def encode_state(self, board: Board, cards: List[Card], 
+                    opponent_board: Board) -> np.ndarray:
+        """Кодирует состояние игры в вектор"""
+        pass
         
-        Args:
-            initial_cards: Начальные карты агента
-        """
-        self.reset_stats()
-        self.current_cards = initial_cards.copy()
-        self.logger.info(f"Starting new game with cards: {initial_cards}")
+    def choose_move(self, board: Board, cards: List[Card],
+                   legal_moves: List[Tuple[Card, Street]],
+                   opponent_board: Board = None) -> Tuple[Card, Street]:
+        """Выбирает действие с помощью epsilon-greedy стратегии"""
+        state = self.encode_state(board, cards, opponent_board)
         
-    def notify_opponent_move(self, card: Card, street: Street, board_state: Dict) -> None:
-        """
-        Уведомляет агента о ходе противника
+        if np.random.random() <= self.epsilon:
+            # Случайное действие
+            return np.random.choice(legal_moves)
+            
+        # Жадное действие
+        q_values = self.model.predict(state.reshape(1, -1))[0]
+        legal_actions = self._get_legal_action_mask(legal_moves)
+        q_values = q_values * legal_actions
         
-        Args:
-            card: Сыгранная карта
-            street: Улица, на которую поставлена карта
-            board_state: Состояние доски после хода
-        """
-        self.opponent_moves.append({
-            'card': card,
-            'street': street,
-            'board_state': board_state
-        })
-        self.logger.debug(f"Opponent move: {card} to {street}")
+        best_action_idx = np.argmax(q_values)
+        return legal_moves[best_action_idx]
         
-    def notify_move_result(self, card: Card, street: Street, 
-                          success: bool, board_state: Dict) -> None:
-        """
-        Уведомляет агента о результате его хода
+    def _get_legal_action_mask(self, legal_moves: List[Tuple[Card, Street]]) -> np.ndarray:
+        """Создает маску для допустимых действий"""
+        mask = np.zeros(self.action_size)
+        for i, move in enumerate(legal_moves):
+            mask[i] = 1
+        return mask
         
-        Args:
-            card: Сыгранная карта
-            street: Улица, на которую поставлена карта
-            success: Был ли ход успешным
-            board_state: Состояние доски после хода
-        """
-        self.moves.append({
-            'card': card,
-            'street': street,
-            'success': success,
-            'board_state': board_state
-        })
-        if success:
-            self.current_cards.remove(card)
-        self.logger.debug(f"Move result: {success} for {card} to {street}")
+    def remember(self, state: np.ndarray, action: int, reward: float, 
+                next_state: np.ndarray, done: bool) -> None:
+        """Сохраняет опыт в памяти"""
+        if len(self.memory) >= self.max_memory_size:
+            self.memory.pop(0)
+        self.memory.append((state, action, reward, next_state, done))
         
-    def notify_game_end(self, result: Dict[str, Any]) -> None:
-        """
-        Уведомляет агента о завершении игры
+    def save(self, filepath: str) -> None:
+        """Сохраняет модель и метаданные"""
+        # Сохраняем модель
+        self.model.save(filepath + '.h5')
         
-        Args:
-            result: Результаты игры (победитель, счет и т.д.)
-        """
-        self.games_played += 1
-        if result.get('winner') == self.name:
-            self.games_won += 1
-        self.total_score += result.get('score', 0)
+        # Сохраняем метаданные
+        metadata = {
+            'epsilon': self.epsilon,
+            'training_history': self.training_history,
+            'timestamp': datetime.now().isoformat(),
+            'config': self.config
+        }
         
-        self.logger.info(f"Game ended. Result: {result}")
-        self.save_game_stats(result)
+        with open(filepath + '.json', 'w') as f:
+            json.dump(metadata, f, indent=4)
+            
+    def load(self, filepath: str) -> None:
+        """Загружает модель и метаданные"""
+        # Загружаем модель
+        self.model.load_weights(filepath + '.h5')
         
-    def reset_stats(self) -> None:
-        """Сбрасывает статистику агента"""
-        self.games_played = 0
-        self.games_won = 0
-        self.total_score = 0
-        self.moves = []
-        self.opponent_moves = []
-        self.current_cards = []
-        self.game_history = []
-        
+        # Загружаем метаданные
+        try:
+            with open(filepath + '.json', 'r') as f:
+                metadata = json.load(f)
+                self.epsilon = metadata.get('epsilon', self.epsilon_min)
+                self.training_history = metadata.get('training_history', [])
+                self.config.update(metadata.get('config', {}))
+        except FileNotFoundError:
+            logger.warning(f"No metadata file found for {filepath}")
+
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Возвращает статистику агента
-        
-        Returns:
-            Dict: Статистика игр агента
-        """
+        """Возвращает текущую статистику агента"""
         return {
-            'name': self.name,
-            'games_played': self.games_played,
-            'games_won': self.games_won,
-            'win_rate': self.games_won / self.games_played if self.games_played > 0 else 0,
-            'average_score': self.total_score / self.games_played if self.games_played > 0 else 0,
-            'total_moves': len(self.moves),
-            'successful_moves': sum(1 for move in self.moves if move['success'])
+            'epsilon': self.epsilon,
+            'memory_size': len(self.memory),
+            'training_history': self.training_history
         }
-        
-    def save_game_stats(self, result: Dict[str, Any]) -> None:
-        """
-        Сохраняет статистику игры
-        
-        Args:
-            result: Результаты игры
-        """
-        game_stats = {
-            'moves': self.moves.copy(),
-            'opponent_moves': self.opponent_moves.copy(),
-            'result': result
-        }
-        self.game_history.append(game_stats)
-        
-    def get_move_history(self) -> List[Dict]:
-        """
-        Возвращает историю ходов
-        
-        Returns:
-            List[Dict]: История ходов агента
-        """
-        return self.moves
-        
-    def get_opponent_history(self) -> List[Dict]:
-        """
-        Возвращает историю ходов противника
-        
-        Returns:
-            List[Dict]: История ходов противника
-        """
-        return self.opponent_moves
