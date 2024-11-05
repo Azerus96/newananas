@@ -3,17 +3,80 @@
 <head>
     <title>Open Face Chinese Poker</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
+    <!-- Боковое меню -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h3>Menu</h3>
+            <button class="close-sidebar">&times;</button>
+        </div>
+        
+        <div class="sidebar-content">
+            <div class="menu-section">
+                <h4>Game Modes</h4>
+                <button class="menu-item" data-mode="normal">Normal Game</button>
+                <button class="menu-item" data-mode="training">Training Mode</button>
+                <button class="menu-item" data-mode="tournament">Tournament</button>
+            </div>
+
+            <div class="menu-section">
+                <h4>Settings</h4>
+                <div class="setting-item">
+                    <label>Fantasy Mode:</label>
+                    <select id="fantasyMode">
+                        <option value="normal">Normal</option>
+                        <option value="progressive">Progressive</option>
+                        <option value="disabled">Disabled</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>AI Think Time:</label>
+                    <input type="range" id="thinkTime" min="100" max="5000" step="100" value="1000">
+                    <span id="thinkTimeValue">1.0s</span>
+                </div>
+            </div>
+
+            <div class="menu-section">
+                <h4>Statistics</h4>
+                <div id="statsPanel" class="stats-panel">
+                    <div class="stat-item">
+                        <span class="stat-label">Games Played:</span>
+                        <span class="stat-value" id="gamesPlayed">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Win Rate:</span>
+                        <span class="stat-value" id="winRate">0%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Fantasy Rate:</span>
+                        <span class="stat-value" id="fantasyRate">0%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Основной контент -->
     <div class="container">
-        <h1>Open Face Chinese Poker</h1>
+        <div class="header">
+            <button id="menuToggle" class="menu-toggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <h1>Open Face Chinese Poker</h1>
+        </div>
         
         <div class="game-controls">
             <button id="newGameBtn">New Game</button>
-            <select id="opponentSelect">
-                <option value="random">Random Agent</option>
-                <option value="dqn">DQN Agent</option>
-            </select>
+            <div class="opponent-select">
+                <select id="opponentSelect">
+                    <!-- Заполняется динамически -->
+                </select>
+                <div id="agentConfig" class="agent-config">
+                    <!-- Конфигурация выбранного агента -->
+                </div>
+            </div>
         </div>
         
         <div class="game-board">
@@ -31,6 +94,12 @@
                     <h3>Back</h3>
                     <div id="opponentBack" class="cards"></div>
                 </div>
+            </div>
+            
+            <div class="game-info">
+                <div id="gameStatus" class="game-status"></div>
+                <div id="score" class="score"></div>
+                <div id="fantasy" class="fantasy"></div>
             </div>
             
             <div class="player-board">
@@ -54,8 +123,11 @@
                 <div id="playerHand" class="cards"></div>
             </div>
         </div>
-        
-        <div id="gameStatus" class="game-status"></div>
+
+        <div class="move-history">
+            <h3>Move History</h3>
+            <div id="moveHistory" class="history-content"></div>
+        </div>
     </div>
     
     <script src="{{ url_for('static', filename='js/game.js') }}"></script>
