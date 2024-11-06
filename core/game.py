@@ -37,7 +37,9 @@ class GameResult:
 class Game:
     def __init__(self, player1: BaseAgent, player2: BaseAgent, 
                  fantasy_mode: FantasyMode = FantasyMode.NORMAL, 
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 think_time: int = 30,
+                 save_replays: bool = False):
         self.player1 = player1
         self.player2 = player2
         self.deck = Deck(seed)
@@ -49,6 +51,8 @@ class Game:
         self.player2_cards = []
         self.history = []
         self.removed_cards = []
+        self.think_time = think_time
+        self.save_replays = save_replays
         
         # Компоненты
         self.analytics = AnalyticsManager()
@@ -61,6 +65,8 @@ class Game:
             self.fantasy_agents.append((1, player1))
         if isinstance(player2, FantasyAgent):
             self.fantasy_agents.append((2, player2))
+            
+        logger.info(f"Game initialized with think_time: {think_time}s")
 
     def start(self) -> None:
         """Начинает новую игру"""
@@ -98,7 +104,8 @@ class Game:
                 self.analytics.track_move(self, {
                     'player': player,
                     'card': card,
-                    'street': street
+                    'street': street,
+                    'think_time': self.think_time
                 })
 
                 # Обработка фантазии
@@ -114,7 +121,8 @@ class Game:
                         agent.fantasy_history.append({
                             'state': self._get_agent_state(player),
                             'move': (card, street),
-                            'fantasy_active': True
+                            'fantasy_active': True,
+                            'think_time': self.think_time
                         })
 
                 if self._is_round_complete():
@@ -136,6 +144,7 @@ class Game:
         cards = self.player2_cards if player == 2 else self.player1_cards
         
         state = self._get_agent_state(player)
+        state['think_time'] = self.think_time
         return agent.get_move(state)
 
     def is_game_over(self) -> bool:
@@ -249,7 +258,8 @@ class Game:
             'fantasy_mode': self.fantasy_manager.mode,
             'removed_cards': self.removed_cards,
             'deck_remaining': len(self.deck),
-            'history': self.history
+            'history': self.history,
+            'think_time': self.think_time
         }
 
     def check_fantasy_entry(self, player: int) -> bool:
@@ -271,7 +281,8 @@ class Game:
             'game_stats': self.analytics.current_game_stats,
             'session_stats': self.analytics.get_session_statistics(),
             'recommendations': self.get_move_recommendations(),
-            'fantasy_stats': self.get_fantasy_statistics()
+            'fantasy_stats': self.get_fantasy_statistics(),
+            'think_time': self.think_time
         }
 
     def save_state(self) -> Dict:
@@ -286,7 +297,9 @@ class Game:
             'history': [(p, c.to_dict(), s.value) for p, c, s in self.history],
             'removed_cards': [card.to_dict() for card in self.removed_cards],
             'fantasy_state': self.fantasy_manager.save_state(),
-            'analytics_state': self.analytics.save_state()
+            'analytics_state': self.analytics.save_state(),
+            'think_time': self.think_time,
+            'save_replays': self.save_replays
         }
 
     def load_state(self, state: Dict) -> None:
@@ -302,15 +315,23 @@ class Game:
             self.removed_cards = [Card.from_dict(c) for c in state['removed_cards']]
             self.fantasy_manager.load_state(state['fantasy_state'])
             self.analytics.load_state(state['analytics_state'])
+            self.think_time = state.get('think_time', 30)
+            self.save_replays = state.get('save_replays', False)
             logger.info("Game state loaded successfully")
         except Exception as e:
             logger.error(f"Error loading game state: {e}")
             raise
 
-    def __str__(self) -> str:
-        """Строковое представление игры"""
-        return f"Game(state={self.state}, current_player={self.current_player}, " \
-               f"fantasy_mode={self.fantasy_manager.mode})"
-
-    def __repr__(self) -> str:
-        return self.__str__()
+    def get_state(self) -> Dict:
+        """Возвращает текущее состояние игры для клиента"""
+        return {
+            'state': self.state.value,
+            'current_player': self.current_player,
+            'player1_board': self.player1_board.to_dict(),
+            'player2_board': self.player2_board.to_dict(),
+            'player1_cards': [card.to_dict() for card in self.player1_cards],
+            'player2_cards': [card.to_dict() for card in self.player2_cards],
+            'fantasy_status': self.get_fantasy_status(),
+            'think_time': self.think_time,
+            'removed_cards': [card.to_dict() for card in self.removed_cards]
+        }
