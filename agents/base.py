@@ -16,6 +16,12 @@ class BaseAgent(ABC):
         self.reset_stats()
         self.logger = get_logger(f"Agent_{name}")
         
+    @classmethod
+    def load_latest(cls, name: str = None, **kwargs):
+        """Базовый метод загрузки последнего состояния"""
+        logger.debug(f"Base load_latest called for {name}")
+        return cls(name=name) if name else cls()
+        
     @abstractmethod
     def choose_move(self, 
                    board: Board,
