@@ -7,6 +7,7 @@ from pathlib import Path
 from agents.base import BaseAgent
 from core.card import Card
 from core.board import Street, Board
+from utils.logger import get_logger
 
 class RandomAgent(BaseAgent):
     """Агент, делающий случайные ходы"""
@@ -15,12 +16,17 @@ class RandomAgent(BaseAgent):
         super().__init__(name)
         if seed is not None:
             random.seed(seed)
+            self.logger.debug(f"Initialized with seed: {seed}")
         self.save_path = f"agents/saved_states/{self.name}_latest.json"
+        self.logger.info(f"Initialized RandomAgent with save path: {self.save_path}")
             
     @classmethod
     def load_latest(cls, name: str = "RandomAgent", **kwargs):
         """Загружает последнее состояние случайного агента"""
-        agent = super().load_latest(name=name)
+        logger = get_logger(f"RandomAgent_loader")
+        logger.info(f"Loading latest state for {name}")
+        
+        agent = cls(name=name)
         
         save_path = f"agents/saved_states/{name}_latest.json"
         try:
@@ -39,7 +45,7 @@ class RandomAgent(BaseAgent):
                         agent.games_won = data['games_won']
                     if 'total_score' in data:
                         agent.total_score = data['total_score']
-                agent.logger.info(f"Loaded state for {name}")
+                agent.logger.info(f"Loaded state from {save_path}")
         except Exception as e:
             agent.logger.error(f"Error loading state: {e}")
             agent.reset_stats()
@@ -82,7 +88,7 @@ class RandomAgent(BaseAgent):
             }
             with open(self.save_path, 'w') as f:
                 json.dump(state, f, indent=4, default=str)
-            self.logger.info(f"Saved state for {self.name}")
+            self.logger.info(f"Saved state to {self.save_path}")
         except Exception as e:
             self.logger.error(f"Error saving state: {e}")
 
