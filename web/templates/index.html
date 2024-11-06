@@ -3,133 +3,212 @@
 <head>
     <title>Open Face Chinese Poker</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/menu.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <!-- Боковое меню -->
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <h3>Menu</h3>
-            <button class="close-sidebar">&times;</button>
-        </div>
-        
-        <div class="sidebar-content">
-            <div class="menu-section">
-                <h4>Game Modes</h4>
-                <button class="menu-item" data-mode="normal">Normal Game</button>
-                <button class="menu-item" data-mode="training">Training Mode</button>
-                <button class="menu-item" data-mode="tournament">Tournament</button>
-            </div>
-
-            <div class="menu-section">
-                <h4>Settings</h4>
-                <div class="setting-item">
-                    <label>Fantasy Mode:</label>
-                    <select id="fantasyMode">
-                        <option value="normal">Normal</option>
-                        <option value="progressive">Progressive</option>
-                        <option value="disabled">Disabled</option>
-                    </select>
-                </div>
-                <div class="setting-item">
-                    <label>AI Think Time:</label>
-                    <input type="range" id="thinkTime" min="100" max="5000" step="100" value="1000">
-                    <span id="thinkTimeValue">1.0s</span>
-                </div>
-            </div>
-
-            <div class="menu-section">
-                <h4>Statistics</h4>
-                <div id="statsPanel" class="stats-panel">
-                    <div class="stat-item">
-                        <span class="stat-label">Games Played:</span>
-                        <span class="stat-value" id="gamesPlayed">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Win Rate:</span>
-                        <span class="stat-value" id="winRate">0%</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Fantasy Rate:</span>
-                        <span class="stat-value" id="fantasyRate">0%</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Основной контент -->
-    <div class="container">
-        <div class="header">
-            <button id="menuToggle" class="menu-toggle">
-                <i class="fas fa-bars"></i>
-            </button>
+    <!-- Главное меню -->
+    <div class="main-menu" id="mainMenu">
+        <div class="menu-header">
             <h1>Open Face Chinese Poker</h1>
         </div>
         
-        <div class="game-controls">
-            <button id="newGameBtn">New Game</button>
-            <div class="opponent-select">
-                <select id="opponentSelect">
-                    <!-- Заполняется динамически -->
-                </select>
-                <div id="agentConfig" class="agent-config">
-                    <!-- Конфигурация выбранного агента -->
+        <div class="menu-content">
+            <!-- Выбор режима -->
+            <div class="menu-section">
+                <h2>Game Mode</h2>
+                <div class="mode-selector">
+                    <button class="mode-btn" data-players="1">Single Player</button>
+                    <button class="mode-btn" data-players="2">Two Players</button>
+                    <button class="mode-btn" data-players="3">Three Players</button>
                 </div>
+            </div>
+
+            <!-- Настройки игры -->
+            <div class="menu-section">
+                <h2>Settings</h2>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label>Fantasy Type:</label>
+                        <select id="fantasyType">
+                            <option value="normal">Normal</option>
+                            <option value="progressive">Progressive</option>
+                            <option value="disabled">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label>AI Think Time (sec):</label>
+                        <input type="range" id="aiThinkTime" min="1" max="60" value="30">
+                        <span id="thinkTimeValue">30</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Выбор AI -->
+            <div class="menu-section">
+                <h2>AI Opponents</h2>
+                <div id="aiSelectors" class="ai-selector-grid">
+                    <!-- Заполняется динамически -->
+                </div>
+            </div>
+
+            <!-- Статистика -->
+            <div class="menu-section">
+                <h2>Statistics</h2>
+                <div class="stats-overview">
+                    <div class="stat-card">
+                        <span class="stat-label">Games Played</span>
+                        <span class="stat-value" id="gamesPlayed">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Win Rate</span>
+                        <span class="stat-value" id="winRate">0%</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Fantasy Rate</span>
+                        <span class="stat-value" id="fantasyRate">0%</span>
+                    </div>
+                </div>
+                <div class="stats-charts">
+                    <canvas id="progressChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Кнопки управления -->
+            <div class="menu-controls">
+                <button id="startGame" class="primary-btn">Start Game</button>
+                <button id="trainingMode" class="secondary-btn">Training Mode</button>
+                <button id="viewStats" class="secondary-btn">View Full Statistics</button>
             </div>
         </div>
-        
-        <div class="game-board">
-            <div class="opponent-board">
-                <h2>Opponent's Board</h2>
-                <div class="street front">
-                    <h3>Front</h3>
-                    <div id="opponentFront" class="cards"></div>
-                </div>
-                <div class="street middle">
-                    <h3>Middle</h3>
-                    <div id="opponentMiddle" class="cards"></div>
-                </div>
-                <div class="street back">
-                    <h3>Back</h3>
-                    <div id="opponentBack" class="cards"></div>
-                </div>
+    </div>
+
+    <!-- Игровое поле -->
+    <div class="game-container" id="gameContainer" style="display: none;">
+        <!-- Верхняя панель -->
+        <div class="top-panel">
+            <button id="menuButton" class="icon-btn"><i class="fas fa-bars"></i></button>
+            <div class="game-status">
+                <span id="currentTurn">Your turn</span>
+                <span id="gameTimer">00:00</span>
             </div>
-            
-            <div class="game-info">
-                <div id="gameStatus" class="game-status"></div>
-                <div id="score" class="score"></div>
-                <div id="fantasy" class="fantasy"></div>
-            </div>
-            
-            <div class="player-board">
-                <h2>Your Board</h2>
-                <div class="street front">
-                    <h3>Front</h3>
-                    <div id="playerFront" class="cards"></div>
-                </div>
-                <div class="street middle">
-                    <h3>Middle</h3>
-                    <div id="playerMiddle" class="cards"></div>
-                </div>
-                <div class="street back">
-                    <h3>Back</h3>
-                    <div id="playerBack" class="cards"></div>
-                </div>
-            </div>
-            
-            <div class="player-hand">
-                <h2>Your Cards</h2>
-                <div id="playerHand" class="cards"></div>
+            <button id="settingsButton" class="icon-btn"><i class="fas fa-cog"></i></button>
+        </div>
+
+        <!-- Область вышедших карт -->
+        <div class="removed-cards-area">
+            <div class="removed-cards-scroll">
+                <div id="removedCards" class="removed-cards-grid"></div>
             </div>
         </div>
 
-        <div class="move-history">
-            <h3>Move History</h3>
-            <div id="moveHistory" class="history-content"></div>
+        <!-- Игровые поля -->
+        <div class="players-container" id="playersContainer">
+            <!-- Поля игроков добавляются динамически -->
+        </div>
+
+        <!-- Область ваших карт -->
+        <div class="player-hand-area">
+            <!-- Режим тренировки -->
+            <div id="trainingControls" class="training-controls" style="display: none;">
+                <div class="card-slots-grid">
+                    <!-- 17 слотов для карт -->
+                    <div id="cardSlots" class="card-slots"></div>
+                </div>
+                <div class="training-buttons">
+                    <button id="distributeCards">Distribute Cards</button>
+                    <button id="clearCards">Clear</button>
+                </div>
+            </div>
+
+            <!-- Обычный режим -->
+            <div id="normalHandArea" class="normal-hand">
+                <div id="playerHand" class="cards-row"></div>
+            </div>
+        </div>
+
+        <!-- Боковая панель статистики -->
+        <div class="side-panel" id="sidePanel">
+            <div class="panel-section">
+                <h3>Current Game</h3>
+                <div class="game-stats">
+                    <div class="stat-row">
+                        <span>Score:</span>
+                        <span id="currentScore">0 - 0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Royalties:</span>
+                        <span id="currentRoyalties">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Fantasy Status:</span>
+                        <span id="fantasyStatus">Normal</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Move History</h3>
+                <div id="moveHistory" class="move-history"></div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Progress</h3>
+                <canvas id="gameProgressChart"></canvas>
+            </div>
         </div>
     </div>
-    
+
+    <!-- Шаблон для игрового поля -->
+    <template id="playerBoardTemplate">
+        <div class="player-board">
+            <div class="player-info">
+                <span class="player-name"></span>
+                <span class="player-score"></span>
+            </div>
+            <div class="board-pyramid">
+                <div class="pyramid-row top">
+                    <div class="card-slot" data-position="0"></div>
+                    <div class="card-slot" data-position="1"></div>
+                    <div class="card-slot" data-position="2"></div>
+                </div>
+                <div class="pyramid-row middle">
+                    <div class="card-slot" data-position="3"></div>
+                    <div class="card-slot" data-position="4"></div>
+                    <div class="card-slot" data-position="5"></div>
+                    <div class="card-slot" data-position="6"></div>
+                    <div class="card-slot" data-position="7"></div>
+                </div>
+                <div class="pyramid-row bottom">
+                    <div class="card-slot" data-position="8"></div>
+                    <div class="card-slot" data-position="9"></div>
+                    <div class="card-slot" data-position="10"></div>
+                    <div class="card-slot" data-position="11"></div>
+                    <div class="card-slot" data-position="12"></div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Модальные окна -->
+    <div id="gameEndModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>Game Over</h2>
+            <div id="gameResults"></div>
+            <div class="modal-buttons">
+                <button id="newGame">New Game</button>
+                <button id="returnToMenu">Return to Menu</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Скрипты -->
     <script src="{{ url_for('static', filename='js/game.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/statistics.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/training.js') }}"></script>
 </body>
 </html>
