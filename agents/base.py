@@ -13,9 +13,9 @@ class BaseAgent(ABC):
     
     def __init__(self, name: str = "Agent"):
         self.name = name
-        self.reset_stats()
         self.logger = get_logger(f"Agent_{name}")
-        
+        self.reset_stats()
+
     @classmethod
     def load_latest(cls, name: str = None, **kwargs):
         """Базовый метод загрузки последнего состояния"""
@@ -114,6 +114,7 @@ class BaseAgent(ABC):
         self.opponent_moves = []
         self.current_cards = []
         self.game_history = []
+        self.logger.debug("Stats reset")
         
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -122,7 +123,7 @@ class BaseAgent(ABC):
         Returns:
             Dict: Статистика игр агента
         """
-        return {
+        stats = {
             'name': self.name,
             'games_played': self.games_played,
             'games_won': self.games_won,
@@ -131,6 +132,8 @@ class BaseAgent(ABC):
             'total_moves': len(self.moves),
             'successful_moves': sum(1 for move in self.moves if move['success'])
         }
+        self.logger.debug(f"Retrieved stats: {stats}")
+        return stats
         
     def save_game_stats(self, result: Dict[str, Any]) -> None:
         """
@@ -145,21 +148,4 @@ class BaseAgent(ABC):
             'result': result
         }
         self.game_history.append(game_stats)
-        
-    def get_move_history(self) -> List[Dict]:
-        """
-        Возвращает историю ходов
-        
-        Returns:
-            List[Dict]: История ходов агента
-        """
-        return self.moves
-        
-    def get_opponent_history(self) -> List[Dict]:
-        """
-        Возвращает историю ходов противника
-        
-        Returns:
-            List[Dict]: История ходов противника
-        """
-        return self.opponent_moves
+        self.logger.debug(f"Saved game stats: {game_stats}")
