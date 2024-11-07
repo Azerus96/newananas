@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 from pathlib import Path
 import os
