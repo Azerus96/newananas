@@ -11,23 +11,25 @@ logger = get_logger(__name__)
 class BaseAgent(ABC):
     """Базовый класс для всех агентов"""
     
-    def __init__(self, name: str = "Agent"):
+    def __init__(self, name: str = "Agent", think_time: int = 30):
         self.name = name
+        self.think_time = think_time  # добавляем параметр think_time
         self.logger = get_logger(f"Agent_{name}")
         self.reset_stats()
 
     @classmethod
-    def load_latest(cls, name: str = None, **kwargs):
+    def load_latest(cls, name: str = None, think_time: int = 30, **kwargs):
         """Базовый метод загрузки последнего состояния"""
         logger.debug(f"Base load_latest called for {name}")
-        return cls(name=name) if name else cls()
+        return cls(name=name, think_time=think_time) if name else cls(think_time=think_time)
         
     @abstractmethod
     def choose_move(self, 
                    board: Board,
                    cards: List[Card],
                    legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Optional[Board] = None) -> Tuple[Card, Street]:
+                   opponent_board: Optional[Board] = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
         """
         Выбирает ход из списка доступных
         
@@ -36,6 +38,7 @@ class BaseAgent(ABC):
             cards: Карты в руке агента
             legal_moves: Список доступных ходов
             opponent_board: Доска противника (если видима)
+            think_time: Время на размышление (если отличается от default)
             
         Returns:
             Tuple[Card, Street]: Выбранные карта и улица для хода
@@ -130,7 +133,8 @@ class BaseAgent(ABC):
             'win_rate': self.games_won / self.games_played if self.games_played > 0 else 0,
             'average_score': self.total_score / self.games_played if self.games_played > 0 else 0,
             'total_moves': len(self.moves),
-            'successful_moves': sum(1 for move in self.moves if move['success'])
+            'successful_moves': sum(1 for move in self.moves if move['success']),
+            'think_time': self.think_time  # добавляем think_time в статистику
         }
         self.logger.debug(f"Retrieved stats: {stats}")
         return stats
@@ -145,7 +149,8 @@ class BaseAgent(ABC):
         game_stats = {
             'moves': self.moves.copy(),
             'opponent_moves': self.opponent_moves.copy(),
-            'result': result
+            'result': result,
+            'think_time': self.think_time  # добавляем think_time в статистику игры
         }
         self.game_history.append(game_stats)
         self.logger.debug(f"Saved game stats: {game_stats}")
