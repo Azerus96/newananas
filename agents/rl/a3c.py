@@ -1,12 +1,11 @@
-# agents/rl/a3c.py
-
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Lambda
 from tensorflow.keras.optimizers import Adam
 import threading
-from typing import List, Tuple, Dict, Any
+import time
+from typing import List, Tuple, Dict, Any, Optional
 from pathlib import Path
 import json
 
@@ -20,8 +19,8 @@ logger = get_logger(__name__)
 class A3CAgent(RLAgent):
     """Asynchronous Advantage Actor-Critic агент"""
     
-    def __init__(self, name: str, state_size: int, action_size: int, config: dict):
-        super().__init__(name, state_size, action_size, config)
+    def __init__(self, name: str, state_size: int, action_size: int, config: dict, think_time: int = 30):
+        super().__init__(name, state_size, action_size, config, think_time=think_time)
         
         # Дополнительные параметры A3C
         self.num_workers = config.get('num_workers', 4)
@@ -41,7 +40,8 @@ class A3CAgent(RLAgent):
                 action_size,
                 self.global_model,
                 self.global_optimizer,
-                config
+                config,
+                think_time=think_time  # Передаем think_time воркерам
             )
             self.workers.append(worker)
 
@@ -50,7 +50,9 @@ class A3CAgent(RLAgent):
         self.total_updates = 0
             
     @classmethod
-    def load_latest(cls, name: str = "A3C", state_size: int = None, action_size: int = None, config: dict = None):
+    def load_latest(cls, name: str = "A3C", state_size: int = None, 
+                   action_size: int = None, config: dict = None, 
+                   think_time: int = 30):  # Добавляем параметр think_time
         """Загружает последнюю сохраненную модель A3C"""
         try:
             # Определяем директорию моделей A3C
@@ -64,7 +66,7 @@ class A3CAgent(RLAgent):
                 logger.warning("No saved A3C models found")
                 if not all([state_size, action_size, config]):
                     raise ValueError("Need state_size, action_size and config for new model")
-                return cls(name, state_size, action_size, config)
+                return cls(name, state_size, action_size, config, think_time=think_time)
 
             # Находим самую свежую модель
             latest_model = max(checkpoints, key=lambda p: p.stat().st_mtime)
@@ -78,9 +80,10 @@ class A3CAgent(RLAgent):
                     state_size = saved_config.get('state_size')
                     action_size = saved_config.get('action_size')
                     config = saved_config.get('config', {})
+                    think_time = saved_config.get('think_time', think_time)  # Загружаем сохраненный think_time
 
             # Создаем и загружаем агента
-            agent = cls(name, state_size, action_size, config)
+            agent = cls(name, state_size, action_size, config, think_time=think_time)
             agent.load(base_path)
             
             logger.info(f"Loaded A3C model: {latest_model}")
@@ -90,7 +93,7 @@ class A3CAgent(RLAgent):
             logger.error(f"Error loading A3C model: {e}")
             if not all([state_size, action_size, config]):
                 raise ValueError("Need state_size, action_size and config for new model")
-            return cls(name, state_size, action_size, config)
+            return cls(name, state_size, action_size, config, think_time=think_time)
             
     def _build_model(self):
         """Создает модель актора и критика"""
@@ -156,10 +159,19 @@ class A3CAgent(RLAgent):
         
     def choose_move(self, board: Board, cards: List[Card],
                    legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Board = None) -> Tuple[Card, Street]:
+                   opponent_board: Board = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
         """Выбирает действие используя обученную политику"""
+        # Используем переданное время или значение по умолчанию
+        current_think_time = think_time or self.think_time
+        
+        start_time = time.time()
+        
         state = self.encode_state(board, cards, opponent_board)
-        policy, _ = self.global_model.predict(state.reshape(1, -1))
+        policy, _ = self.global_model.predict(
+            state.reshape(1, -1),
+            timeout=current_think_time
+        )
         
         # Применяем маску легальных ходов
         legal_mask = self._get_legal_action_mask(legal_moves)
@@ -167,6 +179,11 @@ class A3CAgent(RLAgent):
         
         # Нормализуем вероятности
         masked_policy = masked_policy / np.sum(masked_policy)
+        
+        # Проверяем оставшееся время
+        elapsed_time = time.time() - start_time
+        if elapsed_time > current_think_time:
+            logger.warning(f"Think time exceeded: {elapsed_time:.2f}s > {current_think_time}s")
         
         # Выбираем действие
         action_idx = np.random.choice(self.action_size, p=masked_policy[0])
@@ -205,7 +222,8 @@ class A3CAgent(RLAgent):
             'state_size': self.state_size,
             'action_size': self.action_size,
             'config': self.config,
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'think_time': self.think_time  # Сохраняем think_time
         }
         
         with open(filepath + '_metadata.json', 'w') as f:
@@ -228,6 +246,7 @@ class A3CAgent(RLAgent):
                 self.total_steps = metadata.get('total_steps', 0)
                 self.total_updates = metadata.get('total_updates', 0)
                 self.training_history = metadata.get('training_history', [])
+                self.think_time = metadata.get('think_time', self.think_time)  # Загружаем think_time
                 self.config.update(metadata.get('config', {}))
         except FileNotFoundError:
             logger.warning(f"No metadata file found for {filepath}")
@@ -243,7 +262,8 @@ class A3CAgent(RLAgent):
             'entropy_coef': self.entropy_coef,
             'model_summary': str(self.global_model.summary()),
             'worker_stats': [worker.get_stats() for worker in self.workers],
-            'latest_losses': self.training_history[-10:] if self.training_history else []
+            'latest_losses': self.training_history[-10:] if self.training_history else [],
+            'think_time': self.think_time  # Добавляем think_time в статистику
         }
         return {**base_stats, **a3c_stats}
 
@@ -252,8 +272,9 @@ class A3CWorker(RLAgent):
     """Рабочий поток для A3C"""
     
     def __init__(self, name: str, state_size: int, action_size: int,
-                 global_model: Model, global_optimizer: Adam, config: dict):
-        super().__init__(name, state_size, action_size, config)
+                 global_model: Model, global_optimizer: Adam, config: dict,
+                 think_time: int = 30):  # Добавляем параметр think_time
+        super().__init__(name, state_size, action_size, config, think_time=think_time)
         
         self.global_model = global_model
         self.global_optimizer = global_optimizer
@@ -276,8 +297,12 @@ class A3CWorker(RLAgent):
             states, actions, rewards = [], [], []
             
             while not done:
-                # Получаем действие от локальной модели
-                policy, value = self.local_model.predict(state.reshape(1, -1))
+                # Получаем действие от локальной модели с учетом think_time
+                start_time = time.time()
+                policy, value = self.local_model.predict(
+                    state.reshape(1, -1),
+                    timeout=self.think_time
+                )
                 action = np.random.choice(self.action_size, p=policy[0])
                 
                 # Делаем шаг в среде
@@ -291,6 +316,11 @@ class A3CWorker(RLAgent):
                 state = next_state
                 episode_reward += reward
                 self.steps += 1
+                
+                # Проверяем время
+                elapsed_time = time.time() - start_time
+                if elapsed_time > self.think_time:
+                    logger.warning(f"Worker {self.name} think time exceeded: {elapsed_time:.2f}s > {self.think_time}s")
                 
             # Обучаем на собранной траектории
             self._train_trajectory(states, actions, rewards)
@@ -314,16 +344,17 @@ class A3CWorker(RLAgent):
             
             # Вычисляем преимущества
             advantages = returns - values
-            
+
             # Считаем функцию потерь
             policy_loss = self._compute_policy_loss(policies, actions, advantages)
             value_loss = self._compute_value_loss(values, returns)
             entropy_loss = self._compute_entropy_loss(policies)
             
+            # Общая функция потерь
             total_loss = (policy_loss + 
-                         self.value_loss_coef * value_loss -
+                         self.value_loss_coef * value_loss + 
                          self.entropy_coef * entropy_loss)
-                         
+        
         # Вычисляем градиенты
         grads = tape.gradient(total_loss, self.local_model.trainable_variables)
         
@@ -334,9 +365,9 @@ class A3CWorker(RLAgent):
         
         # Синхронизируем локальную модель с глобальной
         self.local_model.set_weights(self.global_model.get_weights())
-    
+        
     def _compute_returns(self, rewards: np.ndarray) -> np.ndarray:
-        """Вычисляет возвраты с учетом дисконтирования"""
+        """Вычисляет возвраты для каждого шага"""
         returns = np.zeros_like(rewards)
         running_return = 0
         
@@ -345,7 +376,7 @@ class A3CWorker(RLAgent):
             returns[t] = running_return
             
         return returns
-    
+        
     def _compute_policy_loss(self, policies, actions, advantages):
         """Вычисляет функцию потерь политики"""
         actions_one_hot = tf.one_hot(actions, self.action_size)
@@ -353,30 +384,22 @@ class A3CWorker(RLAgent):
         log_probs = tf.math.log(action_probs + 1e-10)
         
         return -tf.reduce_mean(log_probs * advantages)
-    
+        
     def _compute_value_loss(self, values, returns):
         """Вычисляет функцию потерь значения"""
         return tf.reduce_mean(tf.square(returns - values))
-    
+        
     def _compute_entropy_loss(self, policies):
         """Вычисляет энтропию политики"""
-        return -tf.reduce_mean(
-            tf.reduce_sum(policies * tf.math.log(policies + 1e-10), axis=1)
-        )
-
+        log_policies = tf.math.log(policies + 1e-10)
+        return -tf.reduce_mean(tf.reduce_sum(policies * log_policies, axis=1))
+        
     def get_stats(self) -> Dict[str, Any]:
         """Возвращает статистику воркера"""
-        return {
-            'name': self.name,
+        base_stats = super().get_stats()
+        worker_stats = {
             'steps': self.steps,
             'updates': self.updates,
-            'value_loss_coef': self.value_loss_coef,
-            'entropy_coef': self.entropy_coef
+            'think_time': self.think_time  # Добавляем think_time в статистику
         }
-
-    def _build_model(self):
-        """Создает локальную модель с той же архитектурой, что и глобальная"""
-        # Копируем архитектуру глобальной модели
-        model = tf.keras.models.clone_model(self.global_model)
-        model.set_weights(self.global_model.get_weights())
-        return model
+        return {**base_stats, **worker_stats}
