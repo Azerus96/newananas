@@ -12,26 +12,33 @@ from utils.logger import get_logger
 class RandomAgent(BaseAgent):
     """Агент, делающий случайные ходы"""
     
-    def __init__(self, name: str = "RandomAgent", seed: Optional[int] = None):
-        super().__init__(name)
+    SAVE_DIR = Path("agents/saved_states")  # Базовая директория для сохранений
+    
+    def __init__(self, name: str = "RandomAgent", seed: Optional[int] = None, think_time: int = 30):
+        super().__init__(name, think_time=think_time)
+        # Создаем директорию для сохранений, если её нет
+        self.SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Устанавливаем путь сохранения
+        self.save_path = self.SAVE_DIR / f"{self.name}_latest.json"
+        
         if seed is not None:
             random.seed(seed)
             self.logger.debug(f"Initialized with seed: {seed}")
-        self.save_path = f"agents/saved_states/{self.name}_latest.json"
+            
         self.logger.info(f"Initialized RandomAgent with save path: {self.save_path}")
             
     @classmethod
-    def load_latest(cls, name: str = "RandomAgent", **kwargs):
+    def load_latest(cls, name: str = "RandomAgent", think_time: int = 30, **kwargs):
         """Загружает последнее состояние случайного агента"""
         logger = get_logger(f"RandomAgent_loader")
         logger.info(f"Loading latest state for {name}")
         
-        agent = cls(name=name)
+        agent = cls(name=name, think_time=think_time)
         
-        save_path = f"agents/saved_states/{name}_latest.json"
         try:
-            if os.path.exists(save_path):
-                with open(save_path, 'r') as f:
+            if agent.save_path.exists():
+                with agent.save_path.open('r') as f:
                     data = json.load(f)
                     if 'seed' in data:
                         random.seed(data['seed'])
@@ -45,7 +52,9 @@ class RandomAgent(BaseAgent):
                         agent.games_won = data['games_won']
                     if 'total_score' in data:
                         agent.total_score = data['total_score']
-                agent.logger.info(f"Loaded state from {save_path}")
+                    if 'think_time' in data:
+                        agent.think_time = data['think_time']
+                agent.logger.info(f"Loaded state from {agent.save_path}")
         except Exception as e:
             agent.logger.error(f"Error loading state: {e}")
             agent.reset_stats()
@@ -56,7 +65,8 @@ class RandomAgent(BaseAgent):
                    board: Board,
                    cards: List[Card],
                    legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Optional[Board] = None) -> Tuple[Card, Street]:
+                   opponent_board: Optional[Board] = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
         """
         Выбирает случайный ход из доступных
         
@@ -65,18 +75,22 @@ class RandomAgent(BaseAgent):
             cards: Карты в руке агента
             legal_moves: Список доступных ходов
             opponent_board: Доска противника (если видима)
+            think_time: Время на размышление (если отличается от default)
             
         Returns:
             Tuple[Card, Street]: Выбранные карта и улица для хода
         """
+        current_think_time = think_time or self.think_time
         move = random.choice(legal_moves)
-        self.logger.debug(f"Choosing random move: {move}")
+        self.logger.debug(f"Choosing random move: {move} (think_time: {current_think_time}s)")
         return move
 
     def save_latest(self) -> None:
         """Сохраняет текущее состояние агента"""
         try:
-            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+            # Убеждаемся, что директория существует
+            self.save_path.parent.mkdir(parents=True, exist_ok=True)
+            
             state = {
                 'seed': random.getstate(),
                 'moves': self.moves,
@@ -84,9 +98,13 @@ class RandomAgent(BaseAgent):
                 'games_played': self.games_played,
                 'games_won': self.games_won,
                 'total_score': self.total_score,
-                'game_history': self.game_history
+                'game_history': self.game_history,
+                'think_time': self.think_time,
+                'name': self.name,
+                'save_path': str(self.save_path)
             }
-            with open(self.save_path, 'w') as f:
+            
+            with self.save_path.open('w') as f:
                 json.dump(state, f, indent=4, default=str)
             self.logger.info(f"Saved state to {self.save_path}")
         except Exception as e:
@@ -111,9 +129,10 @@ class RandomAgent(BaseAgent):
         """
         base_stats = super().get_stats()
         random_stats = {
-            'random_seed': random.getstate()[1][0],  # Получаем текущее состояние генератора
-            'save_path': self.save_path,
-            'has_saved_state': os.path.exists(self.save_path)
+            'random_seed': random.getstate()[1][0],
+            'save_path': str(self.save_path),
+            'has_saved_state': self.save_path.exists(),
+            'think_time': self.think_time
         }
         return {**base_stats, **random_stats}
 
@@ -131,7 +150,8 @@ class RandomAgent(BaseAgent):
         Returns:
             str: Описание агента
         """
-        return f"RandomAgent(name={self.name}, games_played={self.games_played}, win_rate={self.get_stats()['win_rate']:.2%})"
+        win_rate = self.games_won / self.games_played if self.games_played > 0 else 0
+        return f"RandomAgent(name={self.name}, games_played={self.games_played}, win_rate={win_rate:.2%})"
 
     def __repr__(self) -> str:
         """
@@ -140,5 +160,6 @@ class RandomAgent(BaseAgent):
         Returns:
             str: Подробное описание агента
         """
-        return f"RandomAgent(name='{self.name}', games_played={self.games_played}, " \
-               f"games_won={self.games_won}, total_score={self.total_score})"
+        return (f"RandomAgent(name='{self.name}', games_played={self.games_played}, "
+                f"games_won={self.games_won}, total_score={self.total_score}, "
+                f"think_time={self.think_time}, save_path='{self.save_path}')")
