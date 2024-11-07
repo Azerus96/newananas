@@ -102,8 +102,6 @@ app.config.update(
 current_game: Optional[Game] = None
 current_training_session: Optional[TrainingSession] = None
 
-# ... (предыдущая часть кода) ...
-
 @app.before_request
 def before_request():
     """Выполняется перед каждым запросом"""
@@ -164,6 +162,7 @@ def new_game():
         
         opponent_type = data.get('opponent_type', 'random')
         fantasy_mode = FantasyMode.PROGRESSIVE if data.get('progressive_fantasy') else FantasyMode.NORMAL
+        ai_think_time = data.get('aiThinkTime', 30)  # Получаем время на размышление
         
         if opponent_type not in AVAILABLE_AGENTS:
             return jsonify({
@@ -171,11 +170,13 @@ def new_game():
                 'message': f'Unknown opponent type: {opponent_type}'
             }), 400
             
-        # Создаем агента в зависимости от типа
+        # Создаем агента с учетом think_time
         if opponent_type == 'random':
-            opponent = RandomAgent.load_latest(name=f"{opponent_type}_opponent")
+            opponent = RandomAgent.load_latest(
+                name=f"{opponent_type}_opponent",
+                think_time=ai_think_time
+            )
         else:
-            # Получаем конфигурацию для конкретного типа агента
             agent_config = config.get_agent_config(opponent_type)
             state_size = config.get('state.size')
             action_size = config.get('action.size')
@@ -184,22 +185,18 @@ def new_game():
                 name=f"{opponent_type}_opponent",
                 state_size=state_size,
                 action_size=action_size,
-                config=agent_config
+                config=agent_config,
+                think_time=ai_think_time
             )
         
         logger.info(f"Created opponent agent: {opponent}")
         
-        # Создаем новую игру с настройками из конфигурации
-        game_config = {
-            'fantasy_mode': fantasy_mode,
-            'think_time': config.get('game.think_time', 1000),
-            'save_replays': config.get('game.save_replays', False)
-        }
-        
+        # Создаем игру с переданным think_time
         current_game = Game(
             player1=None,  # Человек
             player2=opponent,
-            **game_config
+            fantasy_mode=fantasy_mode,
+            think_time=ai_think_time
         )
         
         current_game.start()
@@ -385,70 +382,5 @@ def get_game_state():
             'message': str(e)
         }), 500
 
-@app.route('/api/health')
-def health_check():
-    """Проверка здоровья приложения"""
-    try:
-        tf.keras.backend.clear_session()
-        
-        status = {
-            'status': 'ok',
-            'timestamp': datetime.now().isoformat(),
-            'game_active': current_game is not None,
-            'training_active': current_training_session is not None,
-            'tensorflow_status': 'ok',
-            'environment': app.env,
-            'available_agents': list(AVAILABLE_AGENTS.keys()),
-            'config_loaded': config.validate(),
-            'required_dirs': {
-                dir_path: os.path.exists(dir_path)
-                for dir_path in REQUIRED_DIRS
-            }
-        }
-        
-        logger.info(f"Health check: {status}")
-        return jsonify(status)
-    except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.errorhandler(404)
-def not_found_error(error):
-    logger.warning(f"404 error: {request.url}")
-    return jsonify({
-        'status': 'error',
-        'message': 'Resource not found'
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"500 error: {error}", exc_info=True)
-    return jsonify({
-        'status': 'error',
-        'message': 'Internal server error'
-    }), 500
-
 if __name__ == '__main__':
-    try:
-        # Проверяем конфигурацию
-        if not config.validate():
-            raise ValueError("Invalid configuration")
-            
-        # Проверяем наличие всех необходимых директорий
-        for dir_path in REQUIRED_DIRS:
-            if not os.path.exists(dir_path):
-                raise ValueError(f"Required directory not found: {dir_path}")
-        
-        port = config.get('web.port', 5000)
-        host = config.get('web.host', '0.0.0.0')
-        debug = config.get('web.debug', False)
-        
-        logger.info(f"Starting server on {host}:{port} (debug={debug})")
-        app.run(host=host, port=port, debug=debug)
-        
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}", exc_info=True)
-        sys.exit(1)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
