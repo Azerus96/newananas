@@ -39,6 +39,21 @@ class StreetHand:
         """Очищает улицу"""
         self.cards = []
 
+    def to_dict(self) -> dict:
+        """Преобразует улицу в словарь"""
+        return {
+            'cards': [card.to_dict() for card in self.cards],
+            'max_cards': self.max_cards
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'StreetHand':
+        """Создает объект StreetHand из словаря"""
+        return cls(
+            cards=[Card.from_dict(card_data) for card_data in data['cards']],
+            max_cards=data['max_cards']
+        )
+
 @dataclass
 class Board:
     """Представляет доску игрока с тремя улицами"""
@@ -104,3 +119,39 @@ class Board:
         print("Front:", " ".join(card.pretty_str() for card in self.front.cards))
         print("Middle:", " ".join(card.pretty_str() for card in self.middle.cards))
         print("Back:", " ".join(card.pretty_str() for card in self.back.cards))
+
+    def to_dict(self) -> dict:
+        """Преобразует доску в словарь"""
+        return {
+            'front': self.front.to_dict(),
+            'middle': self.middle.to_dict(),
+            'back': self.back.to_dict()
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Board':
+        """Создает объект Board из словаря"""
+        return cls(
+            front=StreetHand.from_dict(data['front']),
+            middle=StreetHand.from_dict(data['middle']),
+            back=StreetHand.from_dict(data['back'])
+        )
+
+    def get_state(self) -> dict:
+        """Возвращает текущее состояние доски"""
+        return {
+            'front': {
+                'cards': [card.to_dict() for card in self.front.cards],
+                'is_complete': self.front.is_full()
+            },
+            'middle': {
+                'cards': [card.to_dict() for card in self.middle.cards],
+                'is_complete': self.middle.is_full()
+            },
+            'back': {
+                'cards': [card.to_dict() for card in self.back.cards],
+                'is_complete': self.back.is_full()
+            },
+            'is_complete': self.is_complete(),
+            'is_valid': self.is_valid()
+        }
