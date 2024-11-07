@@ -16,8 +16,8 @@ logger = get_logger(__name__)
 class RLAgent(BaseAgent):
     """Базовый класс для RL агентов"""
     
-    def __init__(self, name: str, state_size: int, action_size: int, config: dict):
-        super().__init__(name)
+    def __init__(self, name: str, state_size: int, action_size: int, config: dict, think_time: int = 30):
+        super().__init__(name, think_time=think_time)  # Передаем think_time в родительский класс
         self.state_size = state_size
         self.action_size = action_size
         self.config = config
@@ -37,9 +37,9 @@ class RLAgent(BaseAgent):
         self.training_history = []
 
     @classmethod
-    def load_latest(cls, name: str, state_size: int, action_size: int, config: dict):
+    def load_latest(cls, name: str, state_size: int, action_size: int, config: dict, think_time: int = 30):
         """Загружает последнюю сохраненную модель агента"""
-        agent = cls(name, state_size, action_size, config)
+        agent = cls(name, state_size, action_size, config, think_time=think_time)  # Передаем think_time
         
         try:
             # Определяем директорию с моделями для конкретного типа агента
@@ -66,6 +66,7 @@ class RLAgent(BaseAgent):
                     metadata = json.load(f)
                     agent.epsilon = metadata.get('epsilon', agent.epsilon_min)
                     agent.training_history = metadata.get('training_history', [])
+                    agent.think_time = metadata.get('think_time', think_time)  # Загружаем think_time
             
             logger.info(f"Loaded model: {latest_model}")
             return agent
@@ -87,18 +88,28 @@ class RLAgent(BaseAgent):
         
     def choose_move(self, board: Board, cards: List[Card],
                    legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Board = None) -> Tuple[Card, Street]:
+                   opponent_board: Board = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
         """Выбирает действие с помощью epsilon-greedy стратегии"""
+        # Используем переданное время или значение по умолчанию
+        current_think_time = think_time or self.think_time
+        
         state = self.encode_state(board, cards, opponent_board)
         
         if np.random.random() <= self.epsilon:
             # Случайное действие
             return np.random.choice(legal_moves)
             
-        # Жадное действие
-        q_values = self.model.predict(state.reshape(1, -1))[0]
+        # Жадное действие с учетом времени на размышление
+        start_time = time.time()
+        q_values = self.model.predict(state.reshape(1, -1), timeout=current_think_time)[0]
         legal_actions = self._get_legal_action_mask(legal_moves)
         q_values = q_values * legal_actions
+        
+        # Проверяем время
+        elapsed_time = time.time() - start_time
+        if elapsed_time > current_think_time:
+            self.logger.warning(f"Think time exceeded: {elapsed_time:.2f}s > {current_think_time}s")
         
         best_action_idx = np.argmax(q_values)
         return legal_moves[best_action_idx]
@@ -127,7 +138,8 @@ class RLAgent(BaseAgent):
             'epsilon': self.epsilon,
             'training_history': self.training_history,
             'timestamp': datetime.now().isoformat(),
-            'config': self.config
+            'config': self.config,
+            'think_time': self.think_time  # Сохраняем think_time
         }
         
         with open(filepath + '.json', 'w') as f:
@@ -145,13 +157,20 @@ class RLAgent(BaseAgent):
                 self.epsilon = metadata.get('epsilon', self.epsilon_min)
                 self.training_history = metadata.get('training_history', [])
                 self.config.update(metadata.get('config', {}))
+                self.think_time = metadata.get('think_time', self.think_time)  # Загружаем think_time
         except FileNotFoundError:
             logger.warning(f"No metadata file found for {filepath}")
 
     def get_stats(self) -> Dict[str, Any]:
         """Возвращает текущую статистику агента"""
-        return {
+        base_stats = super().get_stats()
+        rl_stats = {
             'epsilon': self.epsilon,
             'memory_size': len(self.memory),
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'model_summary': str(self.model.summary()),
+            'learning_rate': self.learning_rate,
+            'gamma': self.gamma,
+            'think_time': self.think_time  # Добавляем think_time в статистику
         }
+        return {**base_stats, **rl_stats}
