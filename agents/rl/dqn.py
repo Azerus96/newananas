@@ -1,11 +1,10 @@
-# agents/rl/dqn.py
-
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.optimizers import Adam
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import os
+import time
 from pathlib import Path
 
 from agents.rl.base import RLAgent
@@ -18,8 +17,8 @@ logger = get_logger(__name__)
 class DQNAgent(RLAgent):
     """Deep Q-Network агент"""
     
-    def __init__(self, name: str, state_size: int, action_size: int, config: dict):
-        super().__init__(name, state_size, action_size, config)
+    def __init__(self, name: str, state_size: int, action_size: int, config: dict, think_time: int = 30):
+        super().__init__(name, state_size, action_size, config, think_time=think_time)
         
         # Дополнительные параметры DQN
         self.batch_size = config.get('batch_size', 32)
@@ -49,7 +48,9 @@ class DQNAgent(RLAgent):
         return model
 
     @classmethod
-    def load_latest(cls, name: str = "DQN", state_size: int = None, action_size: int = None, config: dict = None):
+    def load_latest(cls, name: str = "DQN", state_size: int = None, 
+                   action_size: int = None, config: dict = None,
+                   think_time: int = 30):
         """Загружает последнюю сохраненную модель DQN"""
         try:
             # Определяем директорию моделей DQN
@@ -63,7 +64,7 @@ class DQNAgent(RLAgent):
                 logger.warning("No saved DQN models found")
                 if not all([state_size, action_size, config]):
                     raise ValueError("Need state_size, action_size and config for new model")
-                return cls(name, state_size, action_size, config)
+                return cls(name, state_size, action_size, config, think_time=think_time)
 
             # Находим самую свежую модель
             latest_model = max(checkpoints, key=lambda p: p.stat().st_mtime)
@@ -77,9 +78,10 @@ class DQNAgent(RLAgent):
                     state_size = saved_config.get('state_size')
                     action_size = saved_config.get('action_size')
                     config = saved_config.get('config', {})
+                    think_time = saved_config.get('think_time', think_time)
 
             # Создаем и загружаем агента
-            agent = cls(name, state_size, action_size, config)
+            agent = cls(name, state_size, action_size, config, think_time=think_time)
             agent.load(str(latest_model))
             
             logger.info(f"Loaded DQN model: {latest_model}")
@@ -89,7 +91,7 @@ class DQNAgent(RLAgent):
             logger.error(f"Error loading DQN model: {e}")
             if not all([state_size, action_size, config]):
                 raise ValueError("Need state_size, action_size and config for new model")
-            return cls(name, state_size, action_size, config)
+            return cls(name, state_size, action_size, config, think_time=think_time)
         
     def encode_state(self, board: Board, cards: List[Card], 
                     opponent_board: Board) -> np.ndarray:
@@ -139,6 +141,39 @@ class DQNAgent(RLAgent):
         # Дополняем нулями до максимального количества карт
         padding = np.zeros(52 * (max_cards - len(cards)))
         return np.concatenate([encoding, padding])
+
+    def choose_move(self, board: Board, cards: List[Card],
+                   legal_moves: List[Tuple[Card, Street]],
+                   opponent_board: Board = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
+        """Выбирает действие с помощью epsilon-greedy стратегии"""
+        # Используем переданное время или значение по умолчанию
+        current_think_time = think_time or self.think_time
+        
+        start_time = time.time()
+        
+        state = self.encode_state(board, cards, opponent_board)
+        
+        if np.random.random() <= self.epsilon:
+            # Случайное действие
+            return np.random.choice(legal_moves)
+            
+        # Жадное действие с учетом времени
+        q_values = self.model.predict(
+            state.reshape(1, -1),
+            timeout=current_think_time
+        )[0]
+        
+        legal_actions = self._get_legal_action_mask(legal_moves)
+        q_values = q_values * legal_actions
+        
+        # Проверяем время
+        elapsed_time = time.time() - start_time
+        if elapsed_time > current_think_time:
+            logger.warning(f"Think time exceeded: {elapsed_time:.2f}s > {current_think_time}s")
+        
+        best_action_idx = np.argmax(q_values)
+        return legal_moves[best_action_idx]
 
     def update_target_model(self):
         """Обновляет веса целевой сети"""
@@ -200,7 +235,8 @@ class DQNAgent(RLAgent):
             'state_size': self.state_size,
             'action_size': self.action_size,
             'config': self.config,
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'think_time': self.think_time  # Добавляем think_time
         }
         
         with open(filepath + '_metadata.json', 'w') as f:
@@ -220,6 +256,7 @@ class DQNAgent(RLAgent):
                 self.epsilon = metadata.get('epsilon', self.epsilon_min)
                 self.steps = metadata.get('steps', 0)
                 self.training_history = metadata.get('training_history', [])
+                self.think_time = metadata.get('think_time', self.think_time)  # Загружаем think_time
                 self.config.update(metadata.get('config', {}))
         except FileNotFoundError:
             logger.warning(f"No metadata file found for {filepath}")
@@ -232,6 +269,7 @@ class DQNAgent(RLAgent):
             'target_update_freq': self.target_update_freq,
             'batch_size': self.batch_size,
             'model_summary': str(self.model.summary()),
-            'latest_losses': self.training_history[-10:] if self.training_history else []
+            'latest_losses': self.training_history[-10:] if self.training_history else [],
+            'think_time': self.think_time  # Добавляем think_time в статистику
         }
         return {**base_stats, **dqn_stats}
