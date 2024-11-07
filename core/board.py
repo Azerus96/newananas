@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from enum import Enum
 
 from core.card import Card
