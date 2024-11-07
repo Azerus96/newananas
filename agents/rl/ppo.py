@@ -1,5 +1,3 @@
-# agents/rl/ppo.py
-
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Model
@@ -8,6 +6,7 @@ from tensorflow.keras.optimizers import Adam
 from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
 import json
+import time
 
 from agents.rl.base import RLAgent
 from utils.logger import get_logger
@@ -19,8 +18,8 @@ logger = get_logger(__name__)
 class PPOAgent(RLAgent):
     """Proximal Policy Optimization агент"""
     
-    def __init__(self, name: str, state_size: int, action_size: int, config: dict):
-        super().__init__(name, state_size, action_size, config)
+    def __init__(self, name: str, state_size: int, action_size: int, config: dict, think_time: int = 30):
+        super().__init__(name, state_size, action_size, config, think_time=think_time)
         
         # Параметры PPO
         self.clip_ratio = config.get('clip_ratio', 0.2)
@@ -38,7 +37,9 @@ class PPOAgent(RLAgent):
         self.updates = 0
 
     @classmethod
-    def load_latest(cls, name: str = "PPO", state_size: int = None, action_size: int = None, config: dict = None):
+    def load_latest(cls, name: str = "PPO", state_size: int = None, 
+                   action_size: int = None, config: dict = None,
+                   think_time: int = 30):
         """Загружает последнюю сохраненную модель PPO"""
         try:
             # Определяем директорию моделей PPO
@@ -52,7 +53,7 @@ class PPOAgent(RLAgent):
                 logger.warning("No saved PPO models found")
                 if not all([state_size, action_size, config]):
                     raise ValueError("Need state_size, action_size and config for new model")
-                return cls(name, state_size, action_size, config)
+                return cls(name, state_size, action_size, config, think_time=think_time)
 
             # Находим самую свежую модель
             latest_model = max(checkpoints, key=lambda p: p.stat().st_mtime)
@@ -66,9 +67,10 @@ class PPOAgent(RLAgent):
                     state_size = saved_config.get('state_size')
                     action_size = saved_config.get('action_size')
                     config = saved_config.get('config', {})
+                    think_time = saved_config.get('think_time', think_time)
 
             # Создаем и загружаем агента
-            agent = cls(name, state_size, action_size, config)
+            agent = cls(name, state_size, action_size, config, think_time=think_time)
             agent.load(base_path)
             
             logger.info(f"Loaded PPO model: {latest_model}")
@@ -78,7 +80,7 @@ class PPOAgent(RLAgent):
             logger.error(f"Error loading PPO model: {e}")
             if not all([state_size, action_size, config]):
                 raise ValueError("Need state_size, action_size and config for new model")
-            return cls(name, state_size, action_size, config)
+            return cls(name, state_size, action_size, config, think_time=think_time)
         
     def _build_policy_model(self):
         """Создает модель политики"""
@@ -143,10 +145,19 @@ class PPOAgent(RLAgent):
         
     def choose_move(self, board: Board, cards: List[Card],
                    legal_moves: List[Tuple[Card, Street]],
-                   opponent_board: Board = None) -> Tuple[Card, Street]:
+                   opponent_board: Board = None,
+                   think_time: Optional[int] = None) -> Tuple[Card, Street]:
         """Выбирает действие используя текущую политику"""
+        # Используем переданное время или значение по умолчанию
+        current_think_time = think_time or self.think_time
+        
+        start_time = time.time()
+        
         state = self.encode_state(board, cards, opponent_board)
-        policy = self.policy_model.predict(state.reshape(1, -1))[0]
+        policy = self.policy_model.predict(
+            state.reshape(1, -1),
+            timeout=current_think_time
+        )[0]
         
         # Применяем маску легальных ходов
         legal_mask = self._get_legal_action_mask(legal_moves)
@@ -154,6 +165,11 @@ class PPOAgent(RLAgent):
         
         # Нормализуем вероятности
         masked_policy = masked_policy / np.sum(masked_policy)
+        
+        # Проверяем время
+        elapsed_time = time.time() - start_time
+        if elapsed_time > current_think_time:
+            logger.warning(f"Think time exceeded: {elapsed_time:.2f}s > {current_think_time}s")
         
         # Выбираем действие
         if np.random.random() < self.epsilon:
@@ -236,7 +252,8 @@ class PPOAgent(RLAgent):
             'state_size': self.state_size,
             'action_size': self.action_size,
             'config': self.config,
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'think_time': self.think_time  # Добавляем think_time
         }
         
         with open(filepath + '_metadata.json', 'w') as f:
@@ -256,6 +273,7 @@ class PPOAgent(RLAgent):
                 self.steps = metadata.get('steps', 0)
                 self.updates = metadata.get('updates', 0)
                 self.training_history = metadata.get('training_history', [])
+                self.think_time = metadata.get('think_time', self.think_time)  # Загружаем think_time
                 self.config.update(metadata.get('config', {}))
         except FileNotFoundError:
             logger.warning(f"No metadata file found for {filepath}")
@@ -271,6 +289,7 @@ class PPOAgent(RLAgent):
             'value_epochs': self.value_epochs,
             'policy_model_summary': str(self.policy_model.summary()),
             'value_model_summary': str(self.value_model.summary()),
-            'latest_losses': self.training_history[-10:] if self.training_history else []
+            'latest_losses': self.training_history[-10:] if self.training_history else [],
+            'think_time': self.think_time  # Добавляем think_time
         }
         return {**base_stats, **ppo_stats}
