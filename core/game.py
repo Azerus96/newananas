@@ -1,337 +1,448 @@
-import os
-from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict
-from enum import Enum
+class Game {
+    constructor() {
+        this.state = {
+            players: 2,
+            currentPlayer: 0,
+            fantasyMode: 'normal',
+            aiThinkTime: 30,
+            agents: [],
+            gameStarted: false,
+            inFantasy: false,
+            removedCards: new Set(),
+            savedState: null
+        };
 
-from core.board import Board, Street
-from core.card import Card
-from core.deck import Deck
-from core.fantasy import FantasyMode, FantasyManager, FantasyStrategy
-from analytics.analytics_manager import AnalyticsManager
-from agents.base import BaseAgent
-from agents.rl.fantasy_agent import FantasyAgent
-from utils.logger import get_logger
+        this.ui = new GameUI(this);
+        this.stats = new GameStatistics();
+        this.socket = io();
+        this.setupSocketHandlers();
+        this.initializeEventListeners();
+    }
 
-logger = get_logger(__name__)
+    setupSocketHandlers() {
+        this.socket.on('game_state', (state) => {
+            this.updateGameState(state);
+        });
 
-class GameState(Enum):
-    WAITING = "waiting"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    ERROR = "error"
+        this.socket.on('ai_thinking', (data) => {
+            this.ui.showAIThinking(data.player);
+        });
 
-@dataclass
-class GameResult:
-    player1_score: int
-    player2_score: int
-    player1_royalties: int
-    player2_royalties: int
-    player1_board: Board
-    player2_board: Board
-    winner: Optional[int] = None
-    fantasy_achieved: bool = False
+        this.socket.on('game_over', (result) => {
+            this.handleGameOver(result);
+        });
 
-    def get_player_score(self, player: int) -> int:
-        return self.player1_score if player == 1 else self.player2_score
+        this.socket.on('error', (error) => {
+            this.ui.showError(error.message);
+        });
 
-class Game:
-    def __init__(self, player1: BaseAgent, player2: BaseAgent, 
-                 fantasy_mode: FantasyMode = FantasyMode.NORMAL, 
-                 seed: Optional[int] = None,
-                 think_time: int = 30,
-                 save_replays: bool = False):
-        self.player1 = player1
-        self.player2 = player2
-        self.deck = Deck(seed)
-        self.state = GameState.WAITING
-        self.current_player = 1
-        self.player1_board = Board()
-        self.player2_board = Board()
-        self.player1_cards = []
-        self.player2_cards = []
-        self.history = []
-        self.removed_cards = []
-        self.think_time = think_time
-        self.save_replays = save_replays
-        
-        # Компоненты
-        self.analytics = AnalyticsManager()
-        self.fantasy_manager = FantasyManager(mode=fantasy_mode)
-        self.fantasy_strategy = FantasyStrategy(self.fantasy_manager)
-        
-        # Настройка FantasyAgent
-        self.fantasy_agents = []
-        if isinstance(player1, FantasyAgent):
-            self.fantasy_agents.append((1, player1))
-        if isinstance(player2, FantasyAgent):
-            self.fantasy_agents.append((2, player2))
-            
-        logger.info(f"Game initialized with think_time: {think_time}s")
+        // Обработка переподключения
+        this.socket.on('connect', () => {
+            if (this.state.gameStarted) {
+                this.loadSavedState();
+            }
+        });
+    }
 
-    def start(self) -> None:
-        """Начинает новую игру"""
-        try:
-            logger.info("Starting new game")
-            self.deck.shuffle()
-            self._deal_initial_cards()
-            self.state = GameState.IN_PROGRESS
-            self.analytics.start_game(self)
-        except Exception as e:
-            logger.error(f"Error starting game: {e}")
-            self.state = GameState.ERROR
-            raise
+    initializeEventListeners() {
+        // Обработчики меню
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.setPlayerCount(parseInt(btn.dataset.players)));
+        });
 
-    def make_move(self, player: int, card: Card, street: Street) -> bool:
-        """Выполняет ход игрока"""
-        if self.state != GameState.IN_PROGRESS:
-            raise ValueError("Game is not in progress")
-            
-        if player != self.current_player:
-            raise ValueError("Not your turn")
-            
-        try:
-            board = self.player1_board if player == 1 else self.player2_board
-            cards = self.player1_cards if player == 1 else self.player2_cards
-            
-            if card not in cards:
-                return False
-                
-            success = board.place_card(card, street)
-            
-            if success:
-                cards.remove(card)
-                self.history.append((player, card, street))
-                self.analytics.track_move(self, {
-                    'player': player,
-                    'card': card,
-                    'street': street,
-                    'think_time': self.think_time
+        document.getElementById('fantasyType').addEventListener('change', (e) => {
+            this.state.fantasyMode = e.target.value;
+        });
+
+        document.getElementById('aiThinkTime').addEventListener('input', (e) => {
+            this.state.aiThinkTime = parseInt(e.target.value);
+            document.getElementById('thinkTimeValue').textContent = e.target.value;
+        });
+
+        document.getElementById('startGame').addEventListener('click', () => this.startGame());
+        document.getElementById('trainingMode').addEventListener('click', () => this.startTrainingMode());
+        document.getElementById('viewStats').addEventListener('click', () => this.showFullStatistics());
+
+        // Обработка навигации
+        window.onpopstate = (event) => {
+            event.preventDefault();
+            if (this.state.gameStarted) {
+                this.saveCurrentState();
+                this.showConfirmDialog(
+                    "Exit game?",
+                    "Do you want to return to menu? Your progress will be saved.",
+                    () => this.returnToMenu(),
+                    () => history.pushState(null, '', window.location.href)
+                );
+            }
+        };
+
+        // Обработка обновления страницы
+        window.onbeforeunload = () => {
+            if (this.state.gameStarted) {
+                this.saveCurrentState();
+            }
+        };
+
+        // Обработчик для мобильного меню
+        document.getElementById('menuButton')?.addEventListener('click', () => {
+            this.ui.toggleMobileMenu();
+        });
+    }
+
+    async setPlayerCount(count) {
+        this.state.players = count;
+        this.ui.updatePlayerCount(count);
+        await this.loadAvailableAgents();
+    }
+
+    async loadAvailableAgents() {
+        try {
+            const response = await fetch('/api/agents');
+            const data = await response.json();
+            if (data.agents) {
+                this.state.availableAgents = data.agents;
+                this.ui.updateAgentSelectors(data.agents, this.state.players);
+            }
+        } catch (error) {
+            console.error('Failed to load agents:', error);
+            this.ui.showError('Failed to load AI agents');
+        }
+    }
+
+async startGame() {
+        try {
+            // Собираем конфигурацию игры
+            const gameConfig = {
+                players: this.state.players,
+                fantasyMode: this.state.fantasyMode,
+                aiThinkTime: this.state.aiThinkTime,
+                agents: this.collectAgentConfigs()
+            };
+
+            const response = await fetch('/api/new_game', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(gameConfig)
+            });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.state.gameStarted = true;
+                this.state.gameId = data.game_id;
+                this.ui.switchToGame();
+                this.initializeGameState(data.game_state);
+                history.pushState({ gameStarted: true }, '', '/game');
+            } else {
+                this.ui.showError(data.message || 'Failed to start game');
+            }
+        } catch (error) {
+            console.error('Failed to start game:', error);
+            this.ui.showError('Failed to start game');
+        }
+    }
+
+    collectAgentConfigs() {
+        const configs = [];
+        document.querySelectorAll('.ai-selector').forEach((selector, index) => {
+            const agentType = selector.querySelector('select').value;
+            const useLatest = selector.querySelector('#useLatestModel')?.checked ?? true;
+            configs.push({
+                type: agentType,
+                useLatestModel: useLatest,
+                thinkTime: this.state.aiThinkTime,
+                position: index + 1
+            });
+        });
+        return configs;
+    }
+
+    initializeGameState(gameState) {
+        this.state = { ...this.state, ...gameState };
+        this.ui.updateGameState(this.state);
+        this.startGameLoop();
+    }
+
+    async startGameLoop() {
+        while (this.state.gameStarted && !this.state.gameOver) {
+            if (this.state.currentPlayer === 0) {
+                // Ход человека
+                await this.handlePlayerTurn();
+            } else {
+                // Ход AI
+                await this.handleAITurn();
+            }
+            await this.checkGameState();
+        }
+    }
+
+    async handlePlayerTurn() {
+        this.ui.enablePlayerInput();
+        return new Promise(resolve => {
+            this.resolvePlayerTurn = resolve;
+        });
+    }
+
+    async handleAITurn() {
+        this.ui.showAIThinking();
+        try {
+            const response = await fetch('/api/ai_move', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    player: this.state.currentPlayer,
+                    gameId: this.state.gameId
                 })
+            });
 
-                # Обработка фантазии
-                if self.fantasy_manager.state.active:
-                    if board.is_complete():
-                        fantasy_success = self.fantasy_manager.check_fantasy_entry(board)
-                        self.fantasy_manager.exit_fantasy(fantasy_success)
-                        self.fantasy_strategy.update_statistics(board, fantasy_success)
+            const data = await response.json();
+            if (data.status === 'ok') {
+                await this.ui.animateMove(data.move);
+                this.updateGameState(data.game_state);
+            }
+        } catch (error) {
+            console.error('AI move failed:', error);
+            this.ui.showError('AI move failed');
+        } finally {
+            this.ui.hideAIThinking();
+        }
+    }
 
-                # Обновление FantasyAgent
-                for player_id, agent in self.fantasy_agents:
-                    if player == player_id and self.fantasy_manager.state.active:
-                        agent.fantasy_history.append({
-                            'state': self._get_agent_state(player),
-                            'move': (card, street),
-                            'fantasy_active': True,
-                            'think_time': self.think_time
-                        })
+    async makeMove(card, position) {
+        try {
+            const response = await fetch('/api/make_move', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    gameId: this.state.gameId,
+                    card: card,
+                    position: position
+                })
+            });
 
-                if self._is_round_complete():
-                    self._deal_new_cards()
-                    
-                self._switch_player()
-                return True
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.updateGameState(data.game_state);
+                if (this.resolvePlayerTurn) {
+                    this.resolvePlayerTurn();
+                }
+                return true;
+            } else {
+                this.ui.showError(data.message || 'Invalid move');
+                return false;
+            }
+        } catch (error) {
+            console.error('Move failed:', error);
+            this.ui.showError('Failed to make move');
+            return false;
+        }
+    }
+
+    updateGameState(newState) {
+        this.state = { ...this.state, ...newState };
+        this.ui.updateGameState(this.state);
+        this.stats.updateStats(this.state);
+        
+        // Сохраняем состояние после каждого обновления
+        this.saveCurrentState();
+    }
+
+async checkGameState() {
+        try {
+            const response = await fetch(`/api/game/state?gameId=${this.state.gameId}`);
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.updateGameState(data.game_state);
+                if (data.game_state.gameOver) {
+                    this.handleGameOver(data.game_state.result);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to check game state:', error);
+        }
+    }
+
+    handleGameOver(result) {
+        this.state.gameStarted = false;
+        this.state.gameOver = true;
+        this.ui.showGameOver(result);
+        this.stats.saveGameResult(result);
+        
+        // Очищаем сохраненное состояние
+        localStorage.removeItem('savedGameState');
+    }
+
+    async startAIvsAI() {
+        try {
+            const agent1 = document.querySelector('#agent1Select').value;
+            const agent2 = document.querySelector('#agent2Select').value;
+            
+            const response = await fetch('/api/ai_vs_ai', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    agent1: agent1,
+                    agent2: agent2,
+                    think_time: this.state.aiThinkTime
+                })
+            });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.state.gameStarted = true;
+                this.state.gameId = data.game_id;
+                this.state.isAIvsAI = true;
+                this.ui.switchToGame();
+                this.initializeGameState(data.game_state);
+            }
+        } catch (error) {
+            console.error('Failed to start AI vs AI game:', error);
+            this.ui.showError('Failed to start AI vs AI game');
+        }
+    }
+
+    startTrainingMode() {
+        window.location.href = '/training';
+    }
+
+    async showFullStatistics() {
+        try {
+            const response = await fetch('/api/statistics');
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.ui.showStatisticsModal(data.statistics);
+            }
+        } catch (error) {
+            console.error('Failed to load statistics:', error);
+            this.ui.showError('Failed to load statistics');
+        }
+    }
+
+    saveCurrentState() {
+        if (!this.state.gameStarted) return;
+
+        const saveState = {
+            timestamp: Date.now(),
+            gameState: this.state
+        };
+
+        try {
+            localStorage.setItem('savedGameState', JSON.stringify(saveState));
+            
+            // Также сохраняем на сервере
+            fetch('/api/save_game_state', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(saveState)
+            });
+        } catch (error) {
+            console.error('Failed to save game state:', error);
+        }
+    }
+
+    async loadSavedState() {
+        try {
+            // Сначала пробуем загрузить с сервера
+            const serverResponse = await fetch('/api/load_game_state', {
+                method: 'POST'
+            });
+            
+            if (serverResponse.ok) {
+                const data = await serverResponse.json();
+                if (data.status === 'ok') {
+                    this.initializeGameState(data.game_state);
+                    return;
+                }
+            }
+
+            // Если не получилось, пробуем локальное сохранение
+            const savedState = localStorage.getItem('savedGameState');
+            if (savedState) {
+                const { timestamp, gameState } = JSON.parse(savedState);
                 
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error making move: {e}")
-            return False
-
-    def get_ai_move(self) -> Tuple[Card, Street]:
-        """Получает ход от ИИ"""
-        player = self.current_player
-        agent = self.player2 if player == 2 else self.player1
-        cards = self.player2_cards if player == 2 else self.player1_cards
-        
-        state = self._get_agent_state(player)
-        state['think_time'] = self.think_time
-        return agent.get_move(state)
-
-    def is_game_over(self) -> bool:
-        """Проверяет, закончена ли игра"""
-        return (self.player1_board.is_complete() and 
-                self.player2_board.is_complete()) or \
-               self.state == GameState.COMPLETED
-
-    def get_result(self) -> GameResult:
-        """Возвращает результат игры"""
-        if not self.is_game_over():
-            raise ValueError("Game is not over")
-            
-        p1_score, p1_royalties = self.player1_board.evaluate()
-        p2_score, p2_royalties = self.player2_board.evaluate()
-        
-        winner = None
-        if p1_score > p2_score:
-            winner = 1
-        elif p2_score > p1_score:
-            winner = 2
-            
-        return GameResult(
-            player1_score=p1_score,
-            player2_score=p2_score,
-            player1_royalties=p1_royalties,
-            player2_royalties=p2_royalties,
-            player1_board=self.player1_board,
-            player2_board=self.player2_board,
-            winner=winner,
-            fantasy_achieved=self.fantasy_manager.state.fantasy_achieved
-        )
-
-    def get_fantasy_status(self) -> Dict:
-        """Возвращает текущий статус фантазии"""
-        return {
-            'active': self.fantasy_manager.state.active,
-            'mode': self.fantasy_manager.mode.value,
-            'cards_count': self.fantasy_manager.state.cards_count,
-            'consecutive_fantasies': self.fantasy_manager.state.consecutive_fantasies,
-            'progressive_bonus': (
-                self.fantasy_manager.state.progressive_bonus.name
-                if self.fantasy_manager.state.progressive_bonus
-                else None
-            )
+                // Проверяем, не устарело ли сохранение (24 часа)
+                if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+                    this.initializeGameState(gameState);
+                } else {
+                    localStorage.removeItem('savedGameState');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load saved state:', error);
         }
+    }
 
-    def get_fantasy_statistics(self) -> Dict:
-        """Возвращает статистику фантазий"""
-        return {
-            'manager_stats': self.fantasy_manager.get_statistics(),
-            'strategy_stats': self.fantasy_strategy.get_strategy_stats()
+    returnToMenu() {
+        this.state.gameStarted = false;
+        this.state.gameOver = false;
+        this.ui.showMainMenu();
+        history.pushState(null, '', '/');
+    }
+
+    showConfirmDialog(title, message, onConfirm, onCancel) {
+        this.ui.showConfirmDialog({
+            title,
+            message,
+            onConfirm: () => {
+                onConfirm();
+                this.ui.hideConfirmDialog();
+            },
+            onCancel: () => {
+                if (onCancel) onCancel();
+                this.ui.hideConfirmDialog();
+            }
+        });
+    }
+}
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+    window.game = new Game();
+});
+
+// Обработка мобильных жестов
+if ('ontouchstart' in window) {
+    document.addEventListener('touchstart', handleTouchStart);
+    document.addEventListener('touchmove', handleTouchMove);
+}
+
+let xDown = null;
+let yDown = null;
+
+function handleTouchStart(evt) {
+    xDown = evt.touches[0].clientX;
+    yDown = evt.touches[0].clientY;
+}
+
+function handleTouchMove(evt) {
+    if (!xDown || !yDown) return;
+
+    const xUp = evt.touches[0].clientX;
+    const yUp = evt.touches[0].clientY;
+
+    const xDiff = xDown - xUp;
+    const yDiff = yDown - yUp;
+
+    if (Math.abs(xDiff) > Math.abs(yDiff)) {
+        if (xDiff > 0) {
+            // Свайп влево - открыть боковую панель
+            window.game.ui.openSidePanel();
+        } else {
+            // Свайп вправо - закрыть боковую панель
+            window.game.ui.closeSidePanel();
         }
+    }
 
-    def get_move_recommendations(self) -> List[Dict]:
-        """Возвращает рекомендации по ходам"""
-        return self.analytics.get_move_recommendations(self)
-
-    def get_removed_cards(self) -> List[Card]:
-        """Возвращает список удаленных карт"""
-        return self.removed_cards
-
-    def _deal_initial_cards(self) -> None:
-        """Раздает начальные карты"""
-        self.player1_cards = self.deck.draw(5)
-        self.player2_cards = self.deck.draw(5)
-        logger.info(f"Dealt initial cards: P1 {self.player1_cards}, P2 {self.player2_cards}")
-
-    def _deal_new_cards(self) -> None:
-        """Раздает новые карты игрокам"""
-        cards_needed = 5 - len(self.player1_cards)
-        if cards_needed > 0:
-            new_cards = self.deck.draw(cards_needed)
-            self.player1_cards.extend(new_cards)
-            
-        cards_needed = 5 - len(self.player2_cards)
-        if cards_needed > 0:
-            new_cards = self.deck.draw(cards_needed)
-            self.player2_cards.extend(new_cards)
-            
-        logger.info("Dealt new cards to players")
-
-    def _deal_fantasy_cards(self, player: int, count: int) -> None:
-        """Раздает дополнительные карты для фантазии"""
-        cards = self.deck.draw(count)
-        if player == 1:
-            self.player1_cards.extend(cards)
-        else:
-            self.player2_cards.extend(cards)
-        logger.info(f"Dealt {count} fantasy cards to player {player}")
-
-    def _switch_player(self) -> None:
-        """Переключает текущего игрока"""
-        self.current_player = 3 - self.current_player  # 1 -> 2, 2 -> 1
-
-    def _is_round_complete(self) -> bool:
-        """Проверяет, завершен ли текущий раунд"""
-        return len(self.player1_cards) == 0 and len(self.player2_cards) == 0
-
-    def _get_agent_state(self, player: int) -> Dict:
-        """Возвращает состояние игры для агента"""
-        board = self.player1_board if player == 1 else self.player2_board
-        opponent_board = self.player2_board if player == 1 else self.player1_board
-        cards = self.player1_cards if player == 1 else self.player2_cards
-        
-        return {
-            'board': board,
-            'opponent_board': opponent_board,
-            'cards': cards,
-            'fantasy_active': self.fantasy_manager.state.active,
-            'fantasy_mode': self.fantasy_manager.mode,
-            'removed_cards': self.removed_cards,
-            'deck_remaining': len(self.deck),
-            'history': self.history,
-            'think_time': self.think_time
-        }
-
-    def check_fantasy_entry(self, player: int) -> bool:
-        """Проверяет возможность входа в фантазию"""
-        board = self.player1_board if player == 1 else self.player2_board
-        
-        if self.fantasy_manager.check_fantasy_entry(board):
-            cards_count = self.fantasy_manager.enter_fantasy()
-            self._deal_fantasy_cards(player, cards_count)
-            self.analytics.track_fantasy_attempt(True)
-            return True
-            
-        self.analytics.track_fantasy_attempt(False)
-        return False
-
-    def get_statistics(self) -> Dict:
-        """Возвращает статистику игры"""
-        return {
-            'game_stats': self.analytics.current_game_stats,
-            'session_stats': self.analytics.get_session_statistics(),
-            'recommendations': self.get_move_recommendations(),
-            'fantasy_stats': self.get_fantasy_statistics(),
-            'think_time': self.think_time
-        }
-
-    def save_state(self) -> Dict:
-        """Сохраняет текущее состояние игры"""
-        return {
-            'state': self.state.value,
-            'current_player': self.current_player,
-            'player1_board': self.player1_board.to_dict(),
-            'player2_board': self.player2_board.to_dict(),
-            'player1_cards': [card.to_dict() for card in self.player1_cards],
-            'player2_cards': [card.to_dict() for card in self.player2_cards],
-            'history': [(p, c.to_dict(), s.value) for p, c, s in self.history],
-            'removed_cards': [card.to_dict() for card in self.removed_cards],
-            'fantasy_state': self.fantasy_manager.save_state(),
-            'analytics_state': self.analytics.save_state(),
-            'think_time': self.think_time,
-            'save_replays': self.save_replays
-        }
-
-    def load_state(self, state: Dict) -> None:
-        """Загружает сохраненное состояние игры"""
-        try:
-            self.state = GameState(state['state'])
-            self.current_player = state['current_player']
-            self.player1_board = Board.from_dict(state['player1_board'])
-            self.player2_board = Board.from_dict(state['player2_board'])
-            self.player1_cards = [Card.from_dict(c) for c in state['player1_cards']]
-            self.player2_cards = [Card.from_dict(c) for c in state['player2_cards']]
-            self.history = [(p, Card.from_dict(c), Street(s)) for p, c, s in state['history']]
-            self.removed_cards = [Card.from_dict(c) for c in state['removed_cards']]
-            self.fantasy_manager.load_state(state['fantasy_state'])
-            self.analytics.load_state(state['analytics_state'])
-            self.think_time = state.get('think_time', 30)
-            self.save_replays = state.get('save_replays', False)
-            logger.info("Game state loaded successfully")
-        except Exception as e:
-            logger.error(f"Error loading game state: {e}")
-            raise
-
-    def get_state(self) -> Dict:
-        """Возвращает текущее состояние игры для клиента"""
-        return {
-            'state': self.state.value,
-            'current_player': self.current_player,
-            'player1_board': self.player1_board.to_dict(),
-            'player2_board': self.player2_board.to_dict(),
-            'player1_cards': [card.to_dict() for card in self.player1_cards],
-            'player2_cards': [card.to_dict() for card in self.player2_cards],
-            'fantasy_status': self.get_fantasy_status(),
-            'think_time': self.think_time,
-            'removed_cards': [card.to_dict() for card in self.removed_cards]
-        }
+    xDown = null;
+    yDown = null;
+}
