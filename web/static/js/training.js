@@ -5,6 +5,9 @@ class TrainingMode {
             currentPhase: null,
             aiThinking: false,
             lastMove: null,
+            selectedRank: null,
+            selectedSuit: null,
+            selectedSlot: null,
             statistics: {
                 movesAnalyzed: 0,
                 thinkTime: [],
@@ -13,133 +16,294 @@ class TrainingMode {
             }
         };
 
-        this.selectedRank = null;
-        this.selectedSuit = null;
-        this.selectedInputSlot = null;
-        this.currentConfig = {
+        this.config = {
             fantasyMode: false,
             progressiveFantasy: false,
             thinkTime: 30
         };
 
+        this.initializeElements();
         this.initializeEventListeners();
-        this.initializeBoard();
+        this.setupMobileSupport();
+    }
+
+    initializeElements() {
+        this.elements = {
+            // Основные элементы
+            container: document.querySelector('.container'),
+            frontStreet: document.getElementById('frontStreet'),
+            middleStreet: document.getElementById('middleStreet'),
+            backStreet: document.getElementById('backStreet'),
+            inputCards: document.getElementById('inputCards'),
+            removedCards: {
+                row1: document.getElementById('removedCardsRow1'),
+                row2: document.getElementById('removedCardsRow2')
+            },
+
+            // Контролы
+            fantasyMode: document.getElementById('fantasyMode'),
+            progressiveFantasy: document.getElementById('progressiveFantasy'),
+            thinkTime: document.getElementById('thinkTime'),
+            distributeButton: document.getElementById('distributeCards'),
+            clearButton: document.getElementById('clearSelection'),
+            startButton: document.getElementById('startTraining'),
+            resetButton: document.getElementById('resetBoard'),
+
+            // Статистика
+            movesCount: document.getElementById('movesCount'),
+            avgThinkTime: document.getElementById('avgThinkTime'),
+            fantasyRate: document.getElementById('fantasyRate'),
+
+            // Выбор карт
+            ranks: document.querySelectorAll('.rank'),
+            suits: document.querySelectorAll('.suit')
+        };
+
+        // Инициализация слотов для карт
+        this.initializeCardSlots();
+    }
+
+    initializeCardSlots() {
+        // Создаем слоты для карт в каждой секции
+        const createSlots = (container, count) => {
+            container.innerHTML = '';
+            for (let i = 0; i < count; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'card-slot';
+                slot.dataset.index = i;
+                container.appendChild(slot);
+            }
+        };
+
+        // Инициализация всех слотов
+        createSlots(this.elements.frontStreet, 3);
+        createSlots(this.elements.middleStreet, 5);
+        createSlots(this.elements.backStreet, 5);
+        createSlots(this.elements.removedCards.row1, 15);
+        createSlots(this.elements.removedCards.row2, 15);
+        createSlots(this.elements.inputCards, 17); // Максимальное количество для фантазии
+    }
+
+    setupMobileSupport() {
+        this.isMobile = window.innerWidth <= 768;
+        if (this.isMobile) {
+            this.setupTouchInteractions();
+            this.adjustLayoutForMobile();
+        }
+
+        // Слушаем изменение ориентации
+        window.addEventListener('orientationchange', () => {
+            this.adjustLayoutForMobile();
+        });
+    }
+
+    setupTouchInteractions() {
+        let touchStartX, touchStartY;
+        let currentCard = null;
+
+        document.addEventListener('touchstart', (e) => {
+            if (e.target.classList.contains('card')) {
+                currentCard = e.target;
+                const touch = e.touches[0];
+                touchStartX = touch.clientX - currentCard.offsetLeft;
+                touchStartY = touch.clientY - currentCard.offsetTop;
+                currentCard.classList.add('dragging');
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchmove', (e) => {
+            if (currentCard) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                currentCard.style.position = 'fixed';
+                currentCard.style.left = `${touch.clientX - touchStartX}px`;
+                currentCard.style.top = `${touch.clientY - touchStartY}px`;
+                
+                // Подсветка возможных слотов
+                this.highlightValidSlots(currentCard);
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchend', (e) => {
+            if (currentCard) {
+                const touch = e.changedTouches[0];
+                const slot = this.findSlotAtPosition(touch.clientX, touch.clientY);
+                
+                if (slot && this.isValidMove(currentCard, slot)) {
+                    this.moveCardToSlot(currentCard, slot);
+                } else {
+                    this.resetCardPosition(currentCard);
+                }
+                
+                currentCard.classList.remove('dragging');
+                this.clearHighlightedSlots();
+                currentCard = null;
+            }
+        });
+    }
+
+adjustLayoutForMobile() {
+        const isLandscape = window.innerWidth > window.innerHeight;
+        document.body.classList.toggle('landscape', isLandscape);
+
+        if (isLandscape) {
+            // Горизонтальная ориентация
+            this.elements.container.classList.add('landscape-layout');
+            this.adjustCardSizeForLandscape();
+        } else {
+            // Вертикальная ориентация
+            this.elements.container.classList.remove('landscape-layout');
+            this.adjustCardSizeForPortrait();
+        }
     }
 
     initializeEventListeners() {
         // Настройки
-        document.getElementById('fantasyMode').addEventListener('change', (e) => {
-            this.currentConfig.fantasyMode = e.target.checked;
+        this.elements.fantasyMode.addEventListener('change', (e) => {
+            this.config.fantasyMode = e.target.checked;
+            this.updateInputCardsVisibility();
         });
 
-        document.getElementById('progressiveFantasy').addEventListener('change', (e) => {
-            this.currentConfig.progressiveFantasy = e.target.checked;
+        this.elements.progressiveFantasy.addEventListener('change', (e) => {
+            this.config.progressiveFantasy = e.target.checked;
         });
 
-        document.getElementById('thinkTime').addEventListener('change', (e) => {
-            this.currentConfig.thinkTime = parseInt(e.target.value);
+        this.elements.thinkTime.addEventListener('input', (e) => {
+            this.config.thinkTime = parseInt(e.target.value);
         });
 
         // Кнопки управления
-        document.getElementById('startTraining').addEventListener('click', () => this.startTraining());
-        document.getElementById('resetBoard').addEventListener('click', () => this.resetBoard());
-        document.getElementById('distributeCards').addEventListener('click', () => this.requestAIDistribution());
-        document.getElementById('clearSelection').addEventListener('click', () => this.clearSelection());
+        this.elements.startButton.addEventListener('click', () => this.startTraining());
+        this.elements.resetButton.addEventListener('click', () => this.resetBoard());
+        this.elements.distributeButton.addEventListener('click', () => this.requestAIDistribution());
+        this.elements.clearButton.addEventListener('click', () => this.clearSelection());
 
         // Выбор карт
-        document.querySelectorAll('.rank').forEach(button => {
+        this.elements.ranks.forEach(button => {
             button.addEventListener('click', (e) => this.selectRank(e.target.dataset.rank));
         });
 
-        document.querySelectorAll('.suit').forEach(button => {
+        this.elements.suits.forEach(button => {
             button.addEventListener('click', (e) => this.selectSuit(e.target.dataset.suit));
         });
 
         // Слоты для карт
-        this.initializeCardSlots();
-    }
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            slot.addEventListener('click', () => this.handleSlotClick(slot));
+        });
 
-    initializeBoard() {
-        const streets = {
-            'frontStreet': 3,
-            'middleStreet': 5,
-            'backStreet': 5,
-            'inputCards': 16,
-            'removedCardsRow1': 13,
-            'removedCardsRow2': 13
-        };
+        // Обработка клавиатуры
+        document.addEventListener('keydown', (e) => this.handleKeyboard(e));
 
-        Object.entries(streets).forEach(([id, count]) => {
-            this.createCardSlots(id, count);
+        // Отмена последнего действия
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                this.undoLastAction();
+            }
         });
     }
 
-    createCardSlots(containerId, count) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
+    updateInputCardsVisibility() {
+        const inputContainer = this.elements.inputCards;
+        const slots = inputContainer.querySelectorAll('.card-slot');
+        
+        slots.forEach((slot, index) => {
+            if (this.config.fantasyMode) {
+                slot.style.display = index < 17 ? 'block' : 'none';
+            } else {
+                slot.style.display = index < 5 ? 'block' : 'none';
+            }
+        });
+    }
 
-        container.innerHTML = '';
-        for (let i = 0; i < count; i++) {
-            const slot = document.createElement('div');
-            slot.className = 'card-slot';
-            slot.dataset.index = i;
-            slot.addEventListener('click', () => this.handleSlotClick(slot, containerId));
-            container.appendChild(slot);
+    selectRank(rank) {
+        this.state.selectedRank = rank;
+        this.elements.ranks.forEach(button => {
+            button.classList.toggle('selected', button.dataset.rank === rank);
+        });
+        this.tryPlaceCard();
+    }
+
+    selectSuit(suit) {
+        this.state.selectedSuit = suit;
+        this.elements.suits.forEach(button => {
+            button.classList.toggle('selected', button.dataset.suit === suit);
+        });
+        this.tryPlaceCard();
+    }
+
+    handleSlotClick(slot) {
+        if (this.state.aiThinking) return;
+
+        if (slot.classList.contains('occupied')) {
+            // Удаление карты при повторном клике
+            this.removeCard(slot);
+        } else {
+            this.state.selectedSlot = slot;
+            this.highlightSelectedSlot();
+            this.tryPlaceCard();
         }
     }
 
-    handleSlotClick(slot, containerId) {
-        if (this.state.aiThinking) return;
+    tryPlaceCard() {
+        if (this.state.selectedRank && this.state.selectedSuit && this.state.selectedSlot) {
+            const card = {
+                rank: this.state.selectedRank,
+                suit: this.state.selectedSuit
+            };
 
-        if (containerId === 'inputCards') {
-            this.selectedInputSlot = slot;
-            this.highlightSelectedSlot();
-        }
-
-        if (this.selectedRank && this.selectedSuit) {
-            this.placeCard(slot, {
-                rank: this.selectedRank,
-                suit: this.selectedSuit
-            });
-            this.clearSelection();
+            if (this.isValidCardPlacement(card, this.state.selectedSlot)) {
+                this.placeCard(this.state.selectedSlot, card);
+                this.clearSelection();
+            }
         }
     }
 
     placeCard(slot, card) {
         const cardElement = this.createCardElement(card);
+        
+        // Анимация размещения
+        cardElement.style.opacity = '0';
         slot.innerHTML = '';
         slot.appendChild(cardElement);
         slot.classList.add('occupied');
-        
-        // Анимация размещения
-        cardElement.classList.add('card-placed');
-        setTimeout(() => cardElement.classList.remove('card-placed'), 300);
+
+        requestAnimationFrame(() => {
+            cardElement.style.opacity = '1';
+            cardElement.classList.add('card-placed');
+        });
+
+        // Сохраняем действие для отмены
+        this.saveAction({
+            type: 'place',
+            slot: slot,
+            card: card
+        });
+
+        this.updateStatistics();
     }
 
-    createCardElement(card) {
-        const element = document.createElement('div');
-        element.className = `card ${card.suit === 'h' || card.suit === 'd' ? 'red' : 'black'}`;
-        element.innerHTML = `
-            <div class="card-inner">
-                <span class="card-value">${card.rank}</span>
-                <span class="card-suit">${this.getSuitSymbol(card.suit)}</span>
-            </div>
-        `;
-        return element;
+    removeCard(slot) {
+        const cardElement = slot.querySelector('.card');
+        if (cardElement) {
+            // Анимация удаления
+            cardElement.classList.add('card-removing');
+            setTimeout(() => {
+                slot.innerHTML = '';
+                slot.classList.remove('occupied');
+            }, 300);
+
+            // Сохраняем действие для отмены
+            this.saveAction({
+                type: 'remove',
+                slot: slot,
+                card: this.getCardData(cardElement)
+            });
+        }
     }
 
-    getSuitSymbol(suit) {
-        return {
-            'h': '♥',
-            'd': '♦',
-            'c': '♣',
-            's': '♠'
-        }[suit] || suit;
-    }
-
-    // Продолжение класса TrainingMode...
-
-    async requestAIDistribution() {
+async requestAIDistribution() {
         if (!this.validateInput()) {
             this.showError('Please place at least 2 input cards');
             return;
@@ -157,8 +321,7 @@ class TrainingMode {
                 body: JSON.stringify({
                     input_cards: this.getInputCards(),
                     removed_cards: this.getRemovedCards(),
-                    config: this.currentConfig,
-                    session_id: this.sessionId
+                    config: this.config
                 })
             });
 
@@ -178,59 +341,109 @@ class TrainingMode {
         }
     }
 
-    async handleAIMove(move) {
-        for (const placement of move.placements) {
-            await this.animateCardPlacement(placement);
-            await new Promise(resolve => setTimeout(resolve, 300));
-        }
-
-        this.state.lastMove = move;
-        this.updateUI();
-    }
-
-    async animateCardPlacement(placement) {
-        const { card, street, position } = placement;
-        const targetSlot = document.querySelector(`#${street}Street .card-slot[data-index="${position}"]`);
-        
-        if (!targetSlot) return;
-
-        const cardElement = this.createCardElement(card);
-        cardElement.style.position = 'absolute';
-        cardElement.style.opacity = '0';
-        document.body.appendChild(cardElement);
-
-        const finalRect = targetSlot.getBoundingClientRect();
-        cardElement.style.top = `${finalRect.top}px`;
-        cardElement.style.left = `${finalRect.left}px`;
-        
-        // Анимация появления
-        await new Promise(resolve => {
-            requestAnimationFrame(() => {
-                cardElement.style.transition = 'all 0.3s ease-out';
-                cardElement.style.opacity = '1';
-                setTimeout(resolve, 300);
-            });
-        });
-
-        // Размещение карты в слоте
-        cardElement.remove();
-        this.placeCard(targetSlot, card);
-    }
-
-    updateStatistics(stats) {
-        this.state.statistics = {
-            ...this.state.statistics,
-            movesAnalyzed: stats.moves_analyzed || 0,
-            thinkTime: [...this.state.statistics.thinkTime, stats.think_time || 0],
-            fantasySuccess: stats.fantasy_success || 0,
-            totalAttempts: stats.total_attempts || 0
+    handleKeyboard(e) {
+        // Быстрые клавиши для рангов
+        const rankKeys = {
+            'a': 'A', 'k': 'K', 'q': 'Q', 'j': 'J', 't': 'T',
+            '2': '2', '3': '3', '4': '4', '5': '5',
+            '6': '6', '7': '7', '8': '8', '9': '9'
         };
 
-        // Обновление UI статистики
-        document.getElementById('movesCount').textContent = this.state.statistics.movesAnalyzed;
-        document.getElementById('avgThinkTime').textContent = 
+        // Быстрые клавиши для мастей
+        const suitKeys = {
+            'h': 'h', 's': 's', 'd': 'd', 'c': 'c'
+        };
+
+        const key = e.key.toLowerCase();
+
+        if (rankKeys[key]) {
+            this.selectRank(rankKeys[key]);
+        } else if (suitKeys[key]) {
+            this.selectSuit(suitKeys[key]);
+        } else if (e.key === 'Escape') {
+            this.clearSelection();
+        } else if (e.key === 'Enter') {
+            this.requestAIDistribution();
+        }
+    }
+
+    saveAction(action) {
+        if (!this.actionHistory) {
+            this.actionHistory = [];
+        }
+        this.actionHistory.push(action);
+    }
+
+    undoLastAction() {
+        if (!this.actionHistory || this.actionHistory.length === 0) {
+            return;
+        }
+
+        const lastAction = this.actionHistory.pop();
+        if (lastAction.type === 'place') {
+            this.removeCard(lastAction.slot);
+        } else if (lastAction.type === 'remove') {
+            this.placeCard(lastAction.slot, lastAction.card);
+        }
+    }
+
+    showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = message;
+        
+        this.elements.container.prepend(errorDiv);
+        
+        setTimeout(() => {
+            errorDiv.classList.add('fade-out');
+            setTimeout(() => errorDiv.remove(), 300);
+        }, 3000);
+    }
+
+    showAIThinking() {
+        const overlay = document.createElement('div');
+        overlay.className = 'thinking-overlay';
+        overlay.innerHTML = `
+            <div class="thinking-content">
+                <div class="spinner"></div>
+                <p>AI analyzing moves...</p>
+                <div class="progress-bar">
+                    <div class="progress"></div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        // Анимация прогресса
+        const progress = overlay.querySelector('.progress');
+        let width = 0;
+        const interval = setInterval(() => {
+            if (width >= 100) {
+                clearInterval(interval);
+            } else {
+                width++;
+                progress.style.width = width + '%';
+            }
+        }, this.config.thinkTime * 10);
+    }
+
+    hideAIThinking() {
+        const overlay = document.querySelector('.thinking-overlay');
+        if (overlay) {
+            overlay.classList.add('fade-out');
+            setTimeout(() => overlay.remove(), 300);
+        }
+    }
+
+    updateStatistics(stats = null) {
+        if (stats) {
+            this.state.statistics = { ...this.state.statistics, ...stats };
+        }
+
+        this.elements.movesCount.textContent = this.state.statistics.movesAnalyzed;
+        this.elements.avgThinkTime.textContent = 
             `${this.calculateAverageThinkTime().toFixed(2)}s`;
-        document.getElementById('fantasyRate').textContent = 
+        this.elements.fantasyRate.textContent = 
             `${this.calculateFantasyRate().toFixed(1)}%`;
     }
 
@@ -244,107 +457,28 @@ class TrainingMode {
         return totalAttempts ? (fantasySuccess / totalAttempts) * 100 : 0;
     }
 
-    validateInput() {
-        const inputCards = this.getInputCards();
-        return inputCards.length >= 2;
-    }
-
-    getInputCards() {
-        const cards = [];
-        document.querySelectorAll('#inputCards .card-slot').forEach(slot => {
-            const cardElement = slot.querySelector('.card');
-            if (cardElement) {
-                const [rank, suit] = this.parseCardElement(cardElement);
-                cards.push({ rank, suit });
-            }
-        });
-        return cards;
-    }
-
-    getRemovedCards() {
-        const cards = [];
-        ['removedCardsRow1', 'removedCardsRow2'].forEach(rowId => {
-            document.querySelectorAll(`#${rowId} .card-slot`).forEach(slot => {
-                const cardElement = slot.querySelector('.card');
-                if (cardElement) {
-                    const [rank, suit] = this.parseCardElement(cardElement);
-                    cards.push({ rank, suit });
-                }
-            });
-        });
-        return cards;
-    }
-
-    parseCardElement(cardElement) {
-        const value = cardElement.querySelector('.card-value').textContent;
-        const suit = cardElement.querySelector('.card-suit').textContent;
-        return [value, this.getSuitCode(suit)];
-    }
-
-    getSuitCode(symbol) {
-        const codes = { '♥': 'h', '♦': 'd', '♣': 'c', '♠': 's' };
-        return codes[symbol] || symbol;
-    }
-
-    showAIThinking() {
-        const overlay = document.createElement('div');
-        overlay.className = 'thinking-overlay';
-        overlay.innerHTML = `
-            <div class="thinking-content">
-                <div class="spinner"></div>
-                <p>AI thinking...</p>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-    }
-
-    hideAIThinking() {
-        const overlay = document.querySelector('.thinking-overlay');
-        if (overlay) {
-            overlay.remove();
-        }
-    }
-
-    showError(message) {
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'error-message';
-        errorDiv.textContent = message;
-        
-        document.querySelector('.container').prepend(errorDiv);
-        
-        setTimeout(() => {
-            errorDiv.classList.add('fade-out');
-            setTimeout(() => errorDiv.remove(), 300);
-        }, 3000);
-    }
-
     resetBoard() {
-        document.querySelectorAll('.card-slot').forEach(slot => {
-            slot.innerHTML = '';
-            slot.classList.remove('occupied');
+        // Анимация сброса
+        const cards = document.querySelectorAll('.card');
+        cards.forEach(card => {
+            card.classList.add('card-removing');
         });
 
-        this.clearSelection();
-        this.resetConfig();
-        this.state.statistics = {
-            movesAnalyzed: 0,
-            thinkTime: [],
-            fantasySuccess: 0,
-            totalAttempts: 0
-        };
-        this.updateStatistics(this.state.statistics);
-    }
+        setTimeout(() => {
+            document.querySelectorAll('.card-slot').forEach(slot => {
+                slot.innerHTML = '';
+                slot.classList.remove('occupied');
+            });
 
-    resetConfig() {
-        this.currentConfig = {
-            fantasyMode: false,
-            progressiveFantasy: false,
-            thinkTime: 30
-        };
-
-        document.getElementById('fantasyMode').checked = false;
-        document.getElementById('progressiveFantasy').checked = false;
-        document.getElementById('thinkTime').value = '30';
+            this.clearSelection();
+            this.actionHistory = [];
+            this.updateStatistics({
+                movesAnalyzed: 0,
+                thinkTime: [],
+                fantasySuccess: 0,
+                totalAttempts: 0
+            });
+        }, 300);
     }
 }
 
