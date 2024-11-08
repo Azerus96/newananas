@@ -5,9 +5,9 @@ import tensorflow as tf
 from datetime import datetime
 from prometheus_client import Counter, Histogram
 from logging.config import dictConfig
-from flask import Flask, render_template, jsonify, request, g, session
+from flask import Flask, render_template, jsonify, request, g, session, redirect, url_for
 from flask_socketio import SocketIO, emit
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 import uuid
 
 # Настройка TensorFlow
@@ -35,7 +35,7 @@ from analytics.analytics_manager import AnalyticsManager
 # Инициализация конфигурации
 config = Config()
 
-# Создаем необходимые директории из конфигурации
+# Создаем необходимые директории
 REQUIRED_DIRS = [
     config.get('paths.models'),
     config.get('paths.logs'),
@@ -83,7 +83,7 @@ RESPONSE_TIME = Histogram('http_response_time_seconds', 'HTTP response time')
 GAME_METRICS = Counter('game_metrics_total', 'Game related metrics', ['type'])
 WEBSOCKET_CONNECTIONS = Counter('websocket_connections_total', 'WebSocket connections')
 
-# Доступные агенты
+# Доступные агенты (убрано слово "Agent" из названий)
 AVAILABLE_AGENTS = {
     'random': RandomAgent,
     'dqn': DQNAgent,
@@ -96,12 +96,14 @@ app = Flask(__name__,
     static_folder=config.get('web.static_folder'),
     template_folder=config.get('web.template_folder')
 )
+
 app.config.update(
     JSON_SORT_KEYS=False,
     PROPAGATE_EXCEPTIONS=True,
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
     DEBUG=config.get('web.debug', False),
-    SECRET_KEY=config.get('web.secret_key', os.urandom(24))
+    SECRET_KEY=config.get('security.secret_key', os.urandom(24)),
+    PERMANENT_SESSION_LIFETIME=config.get('web.session_lifetime', 3600)
 )
 
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -113,11 +115,12 @@ def before_request():
     """Выполняется перед каждым запросом"""
     g.start_time = datetime.now()
     REQUESTS.labels(method=request.method, endpoint=request.endpoint).inc()
-    app.logger.info(f'Request: {request.method} {request.url}')
+    logger.info(f'Request: {request.method} {request.url}')
     
     # Инициализация сессии если её нет
     if 'user_id' not in session:
         session['user_id'] = str(uuid.uuid4())
+        session.permanent = True
 
 @app.after_request
 def after_request(response):
@@ -125,16 +128,14 @@ def after_request(response):
     if hasattr(g, 'start_time'):
         elapsed = datetime.now() - g.start_time
         RESPONSE_TIME.observe(elapsed.total_seconds())
-        app.logger.info(
-            f'Response: {response.status} - {elapsed.total_seconds():.3f}s'
-        )
+        logger.info(f'Response: {response.status} - {elapsed.total_seconds():.3f}s')
     return response
 
 @app.route('/')
 def index():
     """Отображает главную страницу"""
-    return render_template('index.html', 
-                         is_mobile=request.user_agent.platform in ['android', 'iphone', 'ipad'])
+    is_mobile = request.user_agent.platform in ['android', 'iphone', 'ipad']
+    return render_template('index.html', is_mobile=is_mobile)
 
 @app.route('/mobile')
 def mobile():
@@ -144,15 +145,18 @@ def mobile():
 @app.route('/training')
 def training():
     """Отображает страницу режима тренировки"""
-    return render_template('training.html',
-                         is_mobile=request.user_agent.platform in ['android', 'iphone', 'ipad'])
+    is_mobile = request.user_agent.platform in ['android', 'iphone', 'ipad']
+    return render_template('training.html', is_mobile=is_mobile)
 
 @app.route('/api/statistics')
 def get_statistics():
     """Возвращает глобальную статистику"""
     try:
         stats = analytics_manager.get_global_statistics()
-        return jsonify(stats)
+        return jsonify({
+            'status': 'ok',
+            'statistics': stats
+        })
     except Exception as e:
         logger.error(f"Error getting statistics: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
@@ -182,10 +186,8 @@ def new_game():
         data = request.get_json()
         logger.info(f"Creating new game with data: {data}")
         
-        # Создаем уникальный ID для игры
         game_id = str(uuid.uuid4())
         
-        # Настройки игры
         game_config = {
             'players': data.get('players', 2),
             'fantasy_mode': (FantasyMode.PROGRESSIVE 
@@ -206,31 +208,16 @@ def new_game():
                 }), 400
                 
             agent_class = AVAILABLE_AGENTS[agent_type]
+            agent_name = f"{agent_type}_{i+1}"
             
             # Создаем агента с учетом параметров
-            if agent_type == 'random':
-                agent = RandomAgent.load_latest(
-                    name=f"{agent_type}_opponent_{i}",
-                    think_time=game_config['think_time']
-                )
-            else:
-                agent_config = config.get_agent_config(agent_type)
-                state_size = config.get('state.size')
-                action_size = config.get('action.size')
-                
-                agent = agent_class.load_latest(
-                    name=f"{agent_type}_opponent_{i}",
-                    state_size=state_size,
-                    action_size=action_size,
-                    config=agent_config,
-                    think_time=game_config['think_time']
-                ) if use_latest else agent_class(
-                    name=f"{agent_type}_opponent_{i}",
-                    state_size=state_size,
-                    action_size=action_size,
-                    config=agent_config,
-                    think_time=game_config['think_time']
-                )
+            agent = agent_class.load_latest(
+                name=agent_name,
+                think_time=game_config['think_time']
+            ) if use_latest else agent_class(
+                name=agent_name,
+                think_time=game_config['think_time']
+            )
                 
             game_config['agents'].append(agent)
         
@@ -316,157 +303,40 @@ def make_move():
         logger.error(f"Error making move: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/training/start', methods=['POST'])
-def start_training():
-    """Начинает новую сессию тренировки"""
-    try:
-        data = request.get_json()
-        
-        # Создаем ID сессии
-        session_id = str(uuid.uuid4())
-        
-        training_config = TrainingConfig(
-            fantasy_mode=data.get('fantasy_mode', config.get('game.fantasy_mode')),
-            progressive_fantasy=data.get('progressive_fantasy', config.get('game.progressive_fantasy')),
-            time_limit=data.get('time_limit', config.get('game.think_time'))
-        )
-        
-        # Создаем сессию
-        training_session = app_state.create_training_session(session_id, training_config)
-        
-        # Сохраняем ID сессии
-        session['training_session_id'] = session_id
-        
-        GAME_METRICS.labels(type='training_start').inc()
-        
-        return jsonify({
-            'status': 'ok',
-            'session_id': session_id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error starting training session: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/training/distribute', methods=['POST'])
-def distribute_cards():
-    """Распределяет карты в тренировочном режиме"""
-    try:
-        session_id = session.get('training_session_id')
-        if not session_id:
-            return jsonify({'error': 'No active training session'}), 400
-            
-        training_session = app_state.get_training_session(session_id)
-        if not training_session:
-            return jsonify({'error': 'Training session not found'}), 404
-
-        data = request.get_json()
-        logger.info(f"Distributing cards with data: {data}")
-        
-        # Преобразуем данные карт в объекты
-        from core.card import Card
-        input_cards = [Card(rank=c['rank'], suit=c['suit']) for c in data.get('input_cards', [])]
-        removed_cards = [Card(rank=c['rank'], suit=c['suit']) for c in data.get('removed_cards', [])]
-        
-        # Распределяем карты
-        move_result = training_session.make_move(
-            input_cards=input_cards,
-            removed_cards=removed_cards
-        )
-        
-        # Отправляем результат через WebSocket
-        socketio.emit('training_move', move_result, room=session['user_id'])
-        
-        return jsonify({
-            'status': 'ok',
-            'move': move_result,
-            'statistics': training_session.get_statistics()
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in training mode: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/training/stats')
-def get_training_stats():
-    """Получает статистику тренировки"""
-    try:
-        session_id = session.get('training_session_id')
-        if not session_id:
-            return jsonify({'error': 'No active training session'}), 400
-            
-        training_session = app_state.get_training_session(session_id)
-        if not training_session:
-            return jsonify({'error': 'Training session not found'}), 404
-            
-        stats = training_session.get_statistics()
-        logger.info(f"Retrieved training stats: {stats}")
-        return jsonify({
-            'status': 'ok',
-            'statistics': stats
-        })
-    except Exception as e:
-        logger.error(f"Error getting training stats: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/game/state')
-def get_game_state():
-    """Получает текущее состояние игры"""
-    try:
-        game_id = session.get('current_game_id')
-        if not game_id:
-            return jsonify({'error': 'No active game'}), 400
-            
-        game = app_state.get_game(game_id)
-        if not game:
-            return jsonify({'error': 'Game not found'}), 404
-            
-        game_state = game.get_state()
-        logger.info(f"Retrieved game state: {game_state}")
-        return jsonify({
-            'status': 'ok',
-            'game_state': game_state
-        })
-    except Exception as e:
-        logger.error(f"Error getting game state: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/game/ai_vs_ai', methods=['POST'])
+@app.route('/api/ai_vs_ai', methods=['POST'])
 def create_ai_vs_ai_game():
     """Создает игру AI против AI"""
     try:
         data = request.get_json()
         game_id = str(uuid.uuid4())
         
-        # Создаем агентов
         agent1_type = data.get('agent1', 'random')
         agent2_type = data.get('agent2', 'random')
         think_time = data.get('think_time', 30)
         
-        agents = []
-        for agent_type in [agent1_type, agent2_type]:
-            if agent_type not in AVAILABLE_AGENTS:
-                return jsonify({'error': f'Unknown agent type: {agent_type}'}), 400
-                
-            agent_class = AVAILABLE_AGENTS[agent_type]
-            agent = agent_class.load_latest(
-                name=f"{agent_type}_ai_vs_ai",
-                think_time=think_time
-            )
-            agents.append(agent)
-            
-        # Создаем игру
+        if agent1_type not in AVAILABLE_AGENTS or agent2_type not in AVAILABLE_AGENTS:
+            return jsonify({'error': 'Invalid agent type'}), 400
+        
+        # Создаем агентов
+        agent1 = AVAILABLE_AGENTS[agent1_type](
+            name=f"{agent1_type}_1",
+            think_time=think_time
+        )
+        agent2 = AVAILABLE_AGENTS[agent2_type](
+            name=f"{agent2_type}_2",
+            think_time=think_time
+        )
+        
         game_config = {
             'players': 2,
             'fantasy_mode': FantasyMode.NORMAL,
             'think_time': think_time,
-            'agents': agents
+            'agents': [agent1, agent2]
         }
         
         game = app_state.create_game(game_id, game_config)
         game.start()
         
-        # Сохраняем ID игры
         session['current_game_id'] = game_id
         
         # Запускаем игровой процесс в фоне
@@ -511,6 +381,51 @@ def run_ai_vs_ai_game(game_id: str):
         logger.error(f"Error in AI vs AI game: {e}", exc_info=True)
         socketio.emit('error', {'message': str(e)}, room=session['user_id'])
 
+@app.route('/api/save_game_state', methods=['POST'])
+def save_game_state():
+    """Сохраняет состояние текущей игры"""
+    try:
+        game_id = session.get('current_game_id')
+        if not game_id:
+            return jsonify({'error': 'No active game'}), 400
+            
+        game = app_state.get_game(game_id)
+        if not game:
+            return jsonify({'error': 'Game not found'}), 404
+            
+        state = game.save_state()
+        session['saved_game_state'] = state
+        
+        return jsonify({'status': 'ok'})
+        
+    except Exception as e:
+        logger.error(f"Error saving game state: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/load_game_state', methods=['POST'])
+def load_game_state():
+    """Загружает сохраненное состояние игры"""
+    try:
+        saved_state = session.get('saved_game_state')
+        if not saved_state:
+            return jsonify({'error': 'No saved game state'}), 400
+            
+        game_id = str(uuid.uuid4())
+        game = app_state.create_game(game_id, saved_state['config'])
+        game.load_state(saved_state)
+        
+        session['current_game_id'] = game_id
+        
+        return jsonify({
+            'status': 'ok',
+            'game_id': game_id,
+            'game_state': game.get_state()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error loading game state: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 # WebSocket события
 @socketio.on('connect')
 def handle_connect():
@@ -518,12 +433,10 @@ def handle_connect():
     WEBSOCKET_CONNECTIONS.inc()
     logger.info(f"WebSocket connected: {request.sid}")
     
-    # Присоединяем клиента к комнате
     room = session.get('user_id')
     if room:
         socketio.join_room(room)
     
-    # Отправляем текущее состояние если есть активная игра
     game_id = session.get('current_game_id')
     if game_id:
         game = app_state.get_game(game_id)
@@ -535,15 +448,51 @@ def handle_disconnect():
     """Обработка отключения WebSocket"""
     logger.info(f"WebSocket disconnected: {request.sid}")
     
-    # Очищаем состояние если нужно
+    # Сохраняем состояние игры при отключении
+    game_id = session.get('current_game_id')
+    if game_id:
+        game = app_state.get_game(game_id)
+        if game:
+            state = game.save_state()
+            session['saved_game_state'] = state
+    
+    # Очищаем комнату
     room = session.get('user_id')
     if room:
         socketio.leave_room(room)
 
+@app.errorhandler(404)
+def not_found_error(error):
+    """Обработка ошибки 404"""
+    logger.warning(f"404 error: {request.url}")
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Обработка ошибки 500"""
+    logger.error(f"500 error: {error}", exc_info=True)
+    return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/health')
+def health_check():
+    """Проверка здоровья приложения"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'active_games': len(app_state.get_active_games()),
+        'active_training_sessions': len(app_state.get_active_training_sessions())
+    })
+
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug = config.get('web.debug', False)
+    
+    logger.info(f"Starting server on port {port} (debug={debug})")
+    
     socketio.run(
         app,
         host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5000)),
-        debug=config.get('web.debug', False)
+        port=port,
+        debug=debug,
+        use_reloader=debug
     )
