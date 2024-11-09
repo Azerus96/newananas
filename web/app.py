@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List
 import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
 
 # Настройка TensorFlow
 tf.get_logger().setLevel('ERROR')
