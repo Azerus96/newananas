@@ -1,19 +1,38 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Open Face Chinese Poker - Play against AI">
+    <meta name="theme-color" content="#007bff">
+    
     <title>Open Face Chinese Poker</title>
+    
+    <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/menu.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
+    
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
+<body class="{{ 'mobile' if preferences.is_mobile else '' }} {{ preferences.theme }}-theme">
     <!-- Главное меню -->
     <div class="main-menu" id="mainMenu">
         <div class="menu-header">
             <h1>Open Face Chinese Poker</h1>
+            <div class="theme-toggle">
+                <button id="themeToggle">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
         </div>
         
         <div class="menu-content">
@@ -21,9 +40,18 @@
             <div class="menu-section">
                 <h2>Game Mode</h2>
                 <div class="mode-selector">
-                    <button class="mode-btn" data-players="1">Single Player</button>
-                    <button class="mode-btn" data-players="2">Two Players</button>
-                    <button class="mode-btn" data-players="3">Three Players</button>
+                    <button class="mode-btn" data-players="1">
+                        <i class="fas fa-user"></i>
+                        <span>Single Player</span>
+                    </button>
+                    <button class="mode-btn" data-players="2">
+                        <i class="fas fa-user-friends"></i>
+                        <span>Two Players</span>
+                    </button>
+                    <button class="mode-btn" data-players="3">
+                        <i class="fas fa-users"></i>
+                        <span>Three Players</span>
+                    </button>
                 </div>
             </div>
 
@@ -40,9 +68,26 @@
                         </select>
                     </div>
                     <div class="setting-item">
-                        <label>AI Think Time (sec):</label>
-                        <input type="range" id="aiThinkTime" min="1" max="60" value="30">
-                        <span id="thinkTimeValue">30</span>
+                        <label>AI Think Time:</label>
+                        <div class="slider-container">
+                            <input type="range" id="aiThinkTime" min="1" max="60" value="30">
+                            <span id="thinkTimeValue">30s</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>Animation Speed:</label>
+                        <select id="animationSpeed">
+                            <option value="fast">Fast</option>
+                            <option value="normal" selected>Normal</option>
+                            <option value="slow">Slow</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label>Sound Effects:</label>
+                        <label class="switch">
+                            <input type="checkbox" id="soundToggle" checked>
+                            <span class="slider round"></span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -71,6 +116,10 @@
                         <span class="stat-label">Fantasy Rate</span>
                         <span class="stat-value" id="fantasyRate">0%</span>
                     </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Best Score</span>
+                        <span class="stat-value" id="bestScore">0</span>
+                    </div>
                 </div>
                 <div class="stats-charts">
                     <canvas id="progressChart"></canvas>
@@ -79,9 +128,26 @@
 
             <!-- Кнопки управления -->
             <div class="menu-controls">
-                <button id="startGame" class="primary-btn">Start Game</button>
-                <button id="trainingMode" class="secondary-btn">Training Mode</button>
-                <button id="viewStats" class="secondary-btn">View Full Statistics</button>
+                <button id="startGame" class="primary-btn">
+                    <i class="fas fa-play"></i>
+                    Start Game
+                </button>
+                <button id="aiVsAi" class="secondary-btn">
+                    <i class="fas fa-robot"></i>
+                    AI vs AI
+                </button>
+                <button id="trainingMode" class="secondary-btn">
+                    <i class="fas fa-graduation-cap"></i>
+                    Training Mode
+                </button>
+                <button id="viewStats" class="secondary-btn">
+                    <i class="fas fa-chart-bar"></i>
+                    Full Statistics
+                </button>
+                <button id="tutorial" class="secondary-btn">
+                    <i class="fas fa-question-circle"></i>
+                    Tutorial
+                </button>
             </div>
         </div>
     </div>
@@ -90,12 +156,16 @@
     <div class="game-container" id="gameContainer" style="display: none;">
         <!-- Верхняя панель -->
         <div class="top-panel">
-            <button id="menuButton" class="icon-btn"><i class="fas fa-bars"></i></button>
+            <button id="menuButton" class="icon-btn">
+                <i class="fas fa-bars"></i>
+            </button>
             <div class="game-status">
                 <span id="currentTurn">Your turn</span>
                 <span id="gameTimer">00:00</span>
             </div>
-            <button id="settingsButton" class="icon-btn"><i class="fas fa-cog"></i></button>
+            <button id="settingsButton" class="icon-btn">
+                <i class="fas fa-cog"></i>
+            </button>
         </div>
 
         <!-- Область вышедших карт -->
@@ -107,10 +177,9 @@
 
         <!-- Игровые поля -->
         <div class="players-container" id="playersContainer">
-            <!-- Поля игроков добавляются динамически -->
+            <!-- Заполняется динамически -->
         </div>
 
-        <!-- Область ваших карт -->
         <div class="player-hand-area">
             <!-- Режим тренировки -->
             <div id="trainingControls" class="training-controls" style="display: none;">
@@ -130,7 +199,7 @@
             </div>
         </div>
 
-        <!-- Боковая панель статистики -->
+        <!-- Боковая панель -->
         <div class="side-panel" id="sidePanel">
             <div class="panel-section">
                 <h3>Current Game</h3>
@@ -162,12 +231,13 @@
         </div>
     </div>
 
-    <!-- Шаблон для игрового поля -->
+    <!-- Шаблоны -->
     <template id="playerBoardTemplate">
         <div class="player-board">
             <div class="player-info">
                 <span class="player-name"></span>
                 <span class="player-score"></span>
+                <div class="player-status"></div>
             </div>
             <div class="board-pyramid">
                 <div class="pyramid-row top">
@@ -190,6 +260,9 @@
                     <div class="card-slot" data-position="12"></div>
                 </div>
             </div>
+            <div class="discarded-cards">
+                <!-- Сброшенные карты будут отображаться здесь -->
+            </div>
         </div>
     </template>
 
@@ -199,16 +272,69 @@
             <h2>Game Over</h2>
             <div id="gameResults"></div>
             <div class="modal-buttons">
-                <button id="newGame">New Game</button>
-                <button id="returnToMenu">Return to Menu</button>
+                <button id="newGame" class="primary-btn">New Game</button>
+                <button id="returnToMenu" class="secondary-btn">Return to Menu</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="aiVsAiModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>AI vs AI Mode</h2>
+            <div class="ai-settings">
+                <div class="setting-group">
+                    <label>First AI:</label>
+                    <select id="firstAiSelect"></select>
+                </div>
+                <div class="setting-group">
+                    <label>Second AI:</label>
+                    <select id="secondAiSelect"></select>
+                </div>
+                <div class="setting-group">
+                    <label>Think Time:</label>
+                    <input type="range" id="aiVsAiThinkTime" min="1" max="60" value="30">
+                    <span id="aiVsAiThinkTimeValue">30s</span>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button id="startAiVsAi" class="primary-btn">Start</button>
+                <button id="cancelAiVsAi" class="secondary-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>Settings</h2>
+            <div class="settings-form">
+                <!-- Заполняется динамически -->
+            </div>
+            <div class="modal-buttons">
+                <button id="saveSettings" class="primary-btn">Save</button>
+                <button id="cancelSettings" class="secondary-btn">Cancel</button>
             </div>
         </div>
     </div>
 
     <!-- Скрипты -->
-    <script src="{{ url_for('static', filename='js/game.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/statistics.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/training.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/ui.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/statistics.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/training.js') }}" type="module"></script>
+
+    <!-- Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registered');
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>
