@@ -19,6 +19,12 @@ services:
         value: "1"
       - key: TIMEOUT
         value: "300"
+      - key: WORKER_CLASS
+        value: eventlet
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: SENTRY_DSN
         sync: false
       - key: NEW_RELIC_LICENSE_KEY
@@ -26,7 +32,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements/prod.txt
-    startCommand: gunicorn -c gunicorn_config.py web.app:app
+    startCommand: gunicorn --worker-class eventlet -w 1 -b 0.0.0.0:$PORT web.app:app
     autoDeploy: true
     disk:
       name: newananas-data
