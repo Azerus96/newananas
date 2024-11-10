@@ -1,122 +1,273 @@
-<!-- web/templates/tutorial.html -->
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Обучение - OFC Poker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Tutorial - Learn how to play Open Face Chinese Poker">
+    <meta name="theme-color" content="#007bff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <title>Tutorial - OFC Poker</title>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    
+    <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tutorial.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body class="{{ 'mobile' if preferences.is_mobile else '' }} {{ preferences.theme }}-theme">
+    <!-- Навигация -->
+    <nav class="tutorial-nav">
+        <button id="backToMenu" class="nav-btn" aria-label="Back to main menu">
+            <i class="fas fa-arrow-left"></i>
+        </button>
+        <div class="progress-indicator">
+            <div class="progress-dots"></div>
+        </div>
+        <button id="themeToggle" class="nav-btn" aria-label="Toggle theme">
+            <i class="fas fa-moon"></i>
+        </button>
+    </nav>
+
     <div class="tutorial-container">
-        <h1>Руководство по игре в OFC Poker</h1>
-
-        <div class="tutorial-section">
-            <h2>Основные правила</h2>
-            <p>Open Face Chinese Poker (OFC) - это покерная игра, где каждый игрок должен составить три покерных комбинации,
-            располагая карты в три ряда:</p>
-            <ul>
-                <li>Верхний ряд (3 карты)</li>
-                <li>Средний ряд (5 карт)</li>
-                <li>Нижний ряд (5 карт)</li>
-            </ul>
-            <p>Главное правило: сила комбинаций должна увеличиваться снизу вверх. То есть нижний ряд должен быть сильнее среднего,
-            а средний сильнее верхнего.</p>
+        <!-- Прогресс обучения -->
+        <div class="tutorial-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar"></div>
         </div>
 
-        <div class="tutorial-section">
-            <h2>Как играть</h2>
-            <ol>
-                <li>Выберите режим игры и количество игроков</li>
-                <li>Настройте параметры AI и время на ход</li>
-                <li>Разместите карты в ряды, соблюдая правило старшинства</li>
-                <li>Следите за статистикой и анализируйте свою игру</li>
-            </ol>
+        <!-- Содержание -->
+        <div class="tutorial-content">
+            <section class="tutorial-section" id="basics" data-section="1">
+                <h2>Основные правила</h2>
+                <p>Open Face Chinese Poker (OFC) - это покерная игра, где каждый игрок должен составить три покерных комбинации,
+                располагая карты в три ряда:</p>
+                <ul>
+                    <li>Верхний ряд (3 карты)</li>
+                    <li>Средний ряд (5 карт)</li>
+                    <li>Нижний ряд (5 карт)</li>
+                </ul>
+                <div class="interactive-demo" data-demo="basic-rules">
+                    <div class="demo-board"></div>
+                    <button class="demo-button" data-action="showExample">
+                        <i class="fas fa-play"></i> Показать пример
+                    </button>
+                </div>
+            </section>
+
+            <section class="tutorial-section" id="gameplay" data-section="2">
+                <h2>Как играть</h2>
+                <ol>
+                    <li>Выберите режим игры и количество игроков</li>
+                    <li>Настройте параметры AI и время на ход</li>
+                    <li>Разместите карты в ряды, соблюдая правило старшинства</li>
+                    <li>Следите за статистикой и анализируйте свою игру</li>
+                </ol>
+                <div class="interactive-demo" data-demo="gameplay">
+                    <div class="demo-gameplay"></div>
+                    <button class="demo-button" data-action="tryMove">
+                        <i class="fas fa-hand-pointer"></i> Попробовать ход
+                    </button>
+                </div>
+            </section>
+
+            <section class="tutorial-section" id="fantasy" data-section="3">
+                <h2>Фантазия</h2>
+                <p>Фантазия - особый режим игры, который активируется при определенных условиях:</p>
+                <ul>
+                    <li>Нормальная фантазия: активируется при сборе сильных комбинаций</li>
+                    <li>Прогрессивная фантазия: даёт дополнительные бонусы за последовательные успешные фантазии</li>
+                </ul>
+                <div class="interactive-demo" data-demo="fantasy">
+                    <div class="demo-fantasy"></div>
+                    <button class="demo-button" data-action="showFantasy">
+                        <i class="fas fa-magic"></i> Показать фантазию
+                    </button>
+                </div>
+            </section>
+
+            <section class="tutorial-section" id="controls" data-section="4">
+                <h2>Управление</h2>
+                <div class="controls-grid">
+                    <div class="control-group">
+                        <h3>Мышь/Тачскрин:</h3>
+                        <ul>
+                            <li>Перетащите карту в нужную позицию</li>
+                            <li>Кликните по карте для выбора</li>
+                            <li>Кликните по слоту для размещения выбранной карты</li>
+                        </ul>
+                    </div>
+                    <div class="control-group">
+                        <h3>Клавиатура:</h3>
+                        <ul>
+                            <li><kbd>A-K-Q-J-T-9-8-7-6-5-4-3-2</kbd> - выбор ранга карты</li>
+                            <li><kbd>H-S-D-C</kbd> - выбор масти</li>
+                            <li><kbd>Ctrl+Z</kbd> - отменить последний ход</li>
+                            <li><kbd>Esc</kbd> - отменить выбор</li>
+                            <li><kbd>Enter</kbd> - подтвердить ход</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tutorial-section" id="mobile" data-section="5">
+                <h2>Мобильная версия</h2>
+                <p>На мобильных устройствах доступны дополнительные жесты:</p>
+                <div class="mobile-gestures">
+                    <div class="gesture-item">
+                        <i class="fas fa-arrow-right"></i>
+                        <span>Свайп влево - открыть боковую панель</span>
+                    </div>
+                    <div class="gesture-item">
+                        <i class="fas fa-arrow-left"></i>
+                        <span>Свайп вправо - закрыть боковую панель</span>
+                    </div>
+                    <div class="gesture-item">
+                        <i class="fas fa-hand-pointer"></i>
+                        <span>Долгое нажатие - показать возможные ходы</span>
+                    </div>
+                    <div class="gesture-item">
+                        <i class="fas fa-undo"></i>
+                        <span>Двойное нажатие - отменить выбор</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tutorial-section" id="tips" data-section="6">
+                <h2>Советы для начинающих</h2>
+                <div class="tips-container">
+                    <div class="tip-card">
+                        <i class="fas fa-chess-queen"></i>
+                        <h4>Стратегия размещения</h4>
+                        <p>Начинайте с размещения сильных комбинаций в нижнем ряду</p>
+                    </div>
+                    <div class="tip-card">
+                        <i class="fas fa-eye"></i>
+                        <h4>Анализ карт</h4>
+                        <p>Следите за вышедшими картами для лучшего планирования</p>
+                    </div>
+                    <div class="tip-card">
+                        <i class="fas fa-graduation-cap"></i>
+                        <h4>Тренировка</h4>
+                        <p>Используйте режим тренировки для практики без риска</p>
+                    </div>
+                    <div class="tip-card">
+                        <i class="fas fa-chart-line"></i>
+                        <h4>Статистика</h4>
+                        <p>Анализируйте свою статистику для улучшения игры</p>
+                    </div>
+                </div>
+            </section>
         </div>
 
-        <div class="tutorial-section">
-            <h2>Фантазия</h2>
-            <p>Фантазия - особый режим игры, который активируется при определенных условиях:</p>
-            <ul>
-                <li>Нормальная фантазия: активируется при сборе сильных комбинаций</li>
-                <li>Прогрессивная фантазия: даёт дополнительные бонусы за последовательные успешные фантазии</li>
-            </ul>
-            <p>В режиме фантазии игрок получает дополнительные карты для размещения.</p>
+        <!-- Навигация по разделам -->
+        <div class="tutorial-navigation">
+            <button class="nav-btn prev" aria-label="Previous section">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <div class="section-indicator" role="status" aria-live="polite">
+                <span class="current-section">1</span>/<span class="total-sections">6</span>
+            </div>
+            <button class="nav-btn next" aria-label="Next section">
+                <i class="fas fa-chevron-right"></i>
+            </button>
         </div>
 
-        <div class="tutorial-section">
-            <h2>Статистика</h2>
-            <p>В игре отслеживаются различные показатели:</p>
-            <ul>
-                <li><strong>Fouls Rate</strong> - процент ходов, нарушающих правило старшинства комбинаций</li>
-                <li><strong>Scoops Rate</strong> - процент ситуаций, когда игрок выигрывает все три ряда</li>
-                <li><strong>Win Rate</strong> - процент выигранных игр</li>
-                <li><strong>Fantasy Rate</strong> - процент успешных фантазий</li>
-            </ul>
-        </div>
-
-        <div class="tutorial-section">
-            <h2>Управление</h2>
-            <h3>Мышь/Тачскрин:</h3>
-            <ul>
-                <li>Перетащите карту в нужную позицию</li>
-                <li>Кликните по карте для выбора</li>
-                <li>Кликните по слоту для размещения выбранной карты</li>
-            </ul>
-
-            <h3>Клавиатура:</h3>
-            <ul>
-                <li>A-K-Q-J-T-9-8-7-6-5-4-3-2 - выбор ранга карты</li>
-                <li>H-S-D-C - выбор масти</li>
-                <li>Ctrl+Z - отменить последний ход</li>
-                <li>Esc - отменить выбор</li>
-                <li>Enter - подтвердить ход</li>
-            </ul>
-        </div>
-
-        <div class="tutorial-section">
-            <h2>Настройки</h2>
-            <h3>Основные параметры:</h3>
-            <ul>
-                <li><strong>Animation</strong>: 
-                    <ul>
-                        <li>Normal - обычная скорость анимации</li>
-                        <li>Fast - ускоренная анимация</li>
-                        <li>Off - анимация отключена</li>
-                    </ul>
-                </li>
-                <li><strong>AI Think Time</strong> - время на ход AI</li>
-                <li><strong>Fantasy Type</strong> - тип фантазии (Normal/Progressive/Disabled)</li>
-                <li><strong>Sound Effects</strong> - включение/выключение звуков</li>
-            </ul>
-        </div>
-
-        <div class="tutorial-section">
-            <h2>Советы для начинающих</h2>
-            <ul>
-                <li>Начинайте с размещения сильных комбинаций в нижнем ряду</li>
-                <li>Следите за вышедшими картами</li>
-                <li>Используйте режим тренировки для практики</li>
-                <li>Анализируйте статистику для улучшения игры</li>
-                <li>Старайтесь минимизировать количество фолов</li>
-                <li>Ищите возможности для скупов</li>
-            </ul>
-        </div>
-
-        <div class="tutorial-section">
-            <h2>Мобильная версия</h2>
-            <p>На мобильных устройствах доступны дополнительные жесты:</p>
-            <ul>
-                <li>Свайп влево - открыть боковую панель</li>
-                <li>Свайп вправо - закрыть боковую панель</li>
-                <li>Долгое нажатие на карту - показать возможные ходы</li>
-                <li>Двойное нажатие - отменить выбор</li>
-            </ul>
+        <!-- Кнопки действий -->
+        <div class="tutorial-actions">
+            <button id="startPractice" class="action-btn primary">
+                <i class="fas fa-play"></i>
+                Начать тренировку
+            </button>
+            <button id="startGame" class="action-btn secondary">
+                <i class="fas fa-gamepad"></i>
+                Начать игру
+            </button>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/tutorial.js') }}"></script>
+    <!-- Интерактивные демонстрации -->
+    <div id="demoOverlay" class="demo-overlay" style="display: none;">
+        <div class="demo-content">
+            <div class="demo-area"></div>
+            <div class="demo-controls">
+                <button class="demo-prev">
+                    <i class="fas fa-step-backward"></i>
+                </button>
+                <button class="demo-play-pause">
+                    <i class="fas fa-play"></i>
+                </button>
+                <button class="demo-next">
+                    <i class="fas fa-step-forward"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Подсказки -->
+    <div id="tooltipContainer" class="tooltip-container" role="tooltip" aria-hidden="true"></div>
+
+    <!-- Скрипты -->
+    <script src="{{ url_for('static', filename='js/ui.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/tutorial.js') }}" type="module"></script>
+
+    <!-- Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', async () => {
+                try {
+                    const registration = await navigator.serviceWorker.register('/service-worker.js');
+                    console.log('ServiceWorker registered successfully');
+                } catch (error) {
+                    console.error('ServiceWorker registration failed:', error);
+                }
+            });
+        }
+
+        // Обработка онлайн/оффлайн статуса
+        window.addEventListener('online', () => {
+            document.getElementById('offlineIndicator')?.style.display = 'none';
+        });
+        
+        window.addEventListener('offline', () => {
+            document.getElementById('offlineIndicator')?.style.display = 'block';
+        });
+
+        // Обработка жестов для мобильных устройств
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!touchStartX || !touchStartY) return;
+
+            const xDiff = touchStartX - e.touches[0].clientX;
+            const yDiff = touchStartY - e.touches[0].clientY;
+
+            if (Math.abs(xDiff) > Math.abs(yDiff)) {
+                if (xDiff > 50) {
+                    document.dispatchEvent(new CustomEvent('swipeLeft'));
+                } else if (xDiff < -50) {
+                    document.dispatchEvent(new CustomEvent('swipeRight'));
+                }
+            }
+
+            touchStartX = null;
+            touchStartY = null;
+        }, { passive: true });
+    </script>
+
+    <!-- Оффлайн-индикатор -->
+    <div id="offlineIndicator" class="offline-indicator" role="alert" style="display: none;">
+        You are offline. Some features may be limited.
+    </div>
 </body>
 </html>
