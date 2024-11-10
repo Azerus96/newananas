@@ -1,41 +1,79 @@
-# web/templates/training.html
-
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    # web/templates/training.html (продолжение)
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Training Mode - Open Face Chinese Poker">
+    <meta name="theme-color" content="#007bff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
     <title>Training Mode - Open Face Chinese Poker</title>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
+    
+    <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/training.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
-<body>
-    <div class="container">
+<body class="{{ 'mobile' if preferences.is_mobile else '' }} {{ preferences.theme }}-theme">
+    <!-- Индикатор загрузки -->
+    <div id="loadingIndicator" class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading training mode...</p>
+    </div>
+
+    <!-- Навигация -->
+    <nav class="navigation-bar">
+        <button id="backToMenu" class="nav-btn" aria-label="Back to main menu">
+            <i class="fas fa-arrow-left"></i>
+        </button>
         <h1>Training Mode</h1>
-        
+        <button id="helpButton" class="nav-btn" aria-label="Show help">
+            <i class="fas fa-question-circle"></i>
+        </button>
+    </nav>
+
+    <div class="container">
         <!-- Панель настроек -->
         <div class="settings-panel">
             <div class="setting-group">
-                <label>
-                    <input type="checkbox" id="fantasyMode"> Fantasy Mode
+                <label class="setting-label">
+                    <input type="checkbox" id="fantasyMode" aria-label="Enable fantasy mode">
+                    Fantasy Mode
                 </label>
-                <label>
-                    <input type="checkbox" id="progressiveFantasy"> Progressive Fantasy
+                <label class="setting-label">
+                    <input type="checkbox" id="progressiveFantasy" aria-label="Enable progressive fantasy">
+                    Progressive Fantasy
                 </label>
             </div>
             
             <div class="setting-group">
-                <label>AI Think Time (seconds):
-                    <input type="number" id="thinkTime" min="1" max="60" value="30">
+                <label for="thinkTime">AI Think Time (seconds):
+                    <input type="number" id="thinkTime" min="1" max="60" value="30"
+                           aria-label="Set AI think time in seconds">
                 </label>
             </div>
             
-            <button id="startTraining">Start Training</button>
-            <button id="resetBoard">Reset Board</button>
+            <div class="control-buttons">
+                <button id="startTraining" class="primary-btn">
+                    <i class="fas fa-play"></i>
+                    Start Training
+                </button>
+                <button id="resetBoard" class="secondary-btn">
+                    <i class="fas fa-redo"></i>
+                    Reset Board
+                </button>
+            </div>
         </div>
 
         <!-- Вышедшие карты -->
-        <div class="removed-cards-section">
+        <div class="removed-cards-section" role="region" aria-label="Removed cards">
             <h3>Removed Cards</h3>
             <div class="removed-cards-rows">
                 <div id="removedCardsRow1" class="cards-row"></div>
@@ -44,21 +82,21 @@
         </div>
 
         <!-- Игровое поле -->
-        <div class="game-board">
+        <div class="game-board" role="main">
             <div class="pyramid-table">
                 <!-- Верхняя улица (3 карты) -->
                 <div class="street front">
-                    <div id="frontStreet" class="cards-row"></div>
+                    <div id="frontStreet" class="cards-row" role="region" aria-label="Front street"></div>
                 </div>
                 
                 <!-- Средняя улица (5 карт) -->
                 <div class="street middle">
-                    <div id="middleStreet" class="cards-row"></div>
+                    <div id="middleStreet" class="cards-row" role="region" aria-label="Middle street"></div>
                 </div>
                 
                 <!-- Нижняя улица (5 карт) -->
                 <div class="street back">
-                    <div id="backStreet" class="cards-row"></div>
+                    <div id="backStreet" class="cards-row" role="region" aria-label="Back street"></div>
                 </div>
             </div>
         </div>
@@ -66,12 +104,11 @@
         <!-- Панель выбора карт -->
         <div class="card-selection">
             <div class="input-cards-row">
-                <div id="inputCards" class="cards-row"></div>
+                <div id="inputCards" class="cards-row" role="region" aria-label="Selected cards"></div>
             </div>
             
             <div class="card-picker">
-                <div class="ranks">
-                    <!-- Ранги карт -->
+                <div class="ranks" role="group" aria-label="Card ranks">
                     <button class="rank" data-rank="A">A</button>
                     <button class="rank" data-rank="K">K</button>
                     <button class="rank" data-rank="Q">Q</button>
@@ -87,8 +124,7 @@
                     <button class="rank" data-rank="2">2</button>
                 </div>
                 
-                <div class="suits">
-                    <!-- Масти -->
+                <div class="suits" role="group" aria-label="Card suits">
                     <button class="suit" data-suit="s">♠</button>
                     <button class="suit" data-suit="h">♥</button>
                     <button class="suit" data-suit="d">♦</button>
@@ -99,30 +135,148 @@
 
         <!-- Кнопки управления -->
         <div class="control-buttons">
-            <button id="distributeCards">Distribute Cards</button>
-            <button id="clearSelection">Clear Selection</button>
+            <button id="distributeCards" class="action-btn">
+                <i class="fas fa-random"></i>
+                Distribute Cards
+            </button>
+            <button id="clearSelection" class="action-btn">
+                <i class="fas fa-trash"></i>
+                Clear Selection
+            </button>
         </div>
 
         <!-- Статистика -->
         <div class="statistics-panel">
             <h3>Training Statistics</h3>
             <div id="trainingStats" class="stats-container">
-                <div class="stat-group">
+                <div class="stat-group" role="status">
                     <span class="stat-label">Moves Analyzed:</span>
                     <span id="movesCount" class="stat-value">0</span>
                 </div>
-                <div class="stat-group">
+                <div class="stat-group" role="status">
                     <span class="stat-label">Average Think Time:</span>
                     <span id="avgThinkTime" class="stat-value">0s</span>
                 </div>
-                <div class="stat-group">
+                <div class="stat-group" role="status">
                     <span class="stat-label">Fantasy Success Rate:</span>
                     <span id="fantasyRate" class="stat-value">0%</span>
+                </div>
+
+                <div class="stat-group" role="status">
+                    <span class="stat-label">Fouls Rate:</span>
+                    <span id="foulsRate" class="stat-value">0%</span>
+                </div>
+                <div class="stat-group" role="status">
+                    <span class="stat-label">Scoops Rate:</span>
+                    <span id="scoopsRate" class="stat-value">0%</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/training.js') }}"></script>
+    <!-- Подсказки -->
+    <div id="tooltipContainer" class="tooltip-container" role="tooltip" aria-hidden="true"></div>
+
+    <!-- Модальные окна -->
+    <div id="helpModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+        <div class="modal-content">
+            <h2>Training Mode Help</h2>
+            <div class="help-content">
+                <section>
+                    <h3>Controls</h3>
+                    <ul>
+                        <li>Click rank then suit to select a card</li>
+                        <li>Drag cards to position them</li>
+                        <li>Use keyboard shortcuts for quick selection</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Keyboard Shortcuts</h3>
+                    <ul>
+                        <li><kbd>A-K-Q-J-T-9-8-7-6-5-4-3-2</kbd> - Select rank</li>
+                        <li><kbd>H-S-D-C</kbd> - Select suit</li>
+                        <li><kbd>Ctrl+Z</kbd> - Undo last move</li>
+                        <li><kbd>Esc</kbd> - Clear selection</li>
+                    </ul>
+                </section>
+            </div>
+            <button class="close-modal">Close</button>
+        </div>
+    </div>
+
+    <!-- Оффлайн-индикатор -->
+    <div id="offlineIndicator" class="offline-indicator" role="alert" style="display: none;">
+        You are offline. Some features may be limited.
+    </div>
+
+    <!-- Скрипты -->
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Основные скрипты -->
+    <script src="{{ url_for('static', filename='js/ui.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/training.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/statistics.js') }}" type="module"></script>
+
+    <!-- Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', async () => {
+                try {
+                    const registration = await navigator.serviceWorker.register('/service-worker.js');
+                    console.log('ServiceWorker registered successfully');
+                } catch (error) {
+                    console.error('ServiceWorker registration failed:', error);
+                }
+            });
+        }
+
+        // Обработка онлайн/оффлайн статуса
+        window.addEventListener('online', () => {
+            document.getElementById('offlineIndicator').style.display = 'none';
+        });
+        
+        window.addEventListener('offline', () => {
+            document.getElementById('offlineIndicator').style.display = 'block';
+        });
+    </script>
+
+    <!-- Обработка жестов для мобильных устройств -->
+    <script>
+        document.addEventListener('touchstart', handleTouchStart, false);
+        document.addEventListener('touchmove', handleTouchMove, false);
+
+        let xDown = null;
+        let yDown = null;
+
+        function handleTouchStart(evt) {
+            xDown = evt.touches[0].clientX;
+            yDown = evt.touches[0].clientY;
+        }
+
+        function handleTouchMove(evt) {
+            if (!xDown || !yDown) return;
+
+            const xUp = evt.touches[0].clientX;
+            const yUp = evt.touches[0].clientY;
+
+            const xDiff = xDown - xUp;
+            const yDiff = yDown - yUp;
+
+            if (Math.abs(xDiff) > Math.abs(yDiff)) {
+                if (xDiff > 0) {
+                    // Свайп влево
+                    document.dispatchEvent(new CustomEvent('swipeLeft'));
+                } else {
+                    // Свайп вправо
+                    document.dispatchEvent(new CustomEvent('swipeRight'));
+                }
+            }
+
+            xDown = null;
+            yDown = null;
+        }
+    </script>
 </body>
 </html>
