@@ -1,0 +1,122 @@
+<!-- web/templates/tutorial.html -->
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Обучение - OFC Poker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tutorial.css') }}">
+</head>
+<body class="{{ 'mobile' if preferences.is_mobile else '' }} {{ preferences.theme }}-theme">
+    <div class="tutorial-container">
+        <h1>Руководство по игре в OFC Poker</h1>
+
+        <div class="tutorial-section">
+            <h2>Основные правила</h2>
+            <p>Open Face Chinese Poker (OFC) - это покерная игра, где каждый игрок должен составить три покерных комбинации,
+            располагая карты в три ряда:</p>
+            <ul>
+                <li>Верхний ряд (3 карты)</li>
+                <li>Средний ряд (5 карт)</li>
+                <li>Нижний ряд (5 карт)</li>
+            </ul>
+            <p>Главное правило: сила комбинаций должна увеличиваться снизу вверх. То есть нижний ряд должен быть сильнее среднего,
+            а средний сильнее верхнего.</p>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Как играть</h2>
+            <ol>
+                <li>Выберите режим игры и количество игроков</li>
+                <li>Настройте параметры AI и время на ход</li>
+                <li>Разместите карты в ряды, соблюдая правило старшинства</li>
+                <li>Следите за статистикой и анализируйте свою игру</li>
+            </ol>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Фантазия</h2>
+            <p>Фантазия - особый режим игры, который активируется при определенных условиях:</p>
+            <ul>
+                <li>Нормальная фантазия: активируется при сборе сильных комбинаций</li>
+                <li>Прогрессивная фантазия: даёт дополнительные бонусы за последовательные успешные фантазии</li>
+            </ul>
+            <p>В режиме фантазии игрок получает дополнительные карты для размещения.</p>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Статистика</h2>
+            <p>В игре отслеживаются различные показатели:</p>
+            <ul>
+                <li><strong>Fouls Rate</strong> - процент ходов, нарушающих правило старшинства комбинаций</li>
+                <li><strong>Scoops Rate</strong> - процент ситуаций, когда игрок выигрывает все три ряда</li>
+                <li><strong>Win Rate</strong> - процент выигранных игр</li>
+                <li><strong>Fantasy Rate</strong> - процент успешных фантазий</li>
+            </ul>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Управление</h2>
+            <h3>Мышь/Тачскрин:</h3>
+            <ul>
+                <li>Перетащите карту в нужную позицию</li>
+                <li>Кликните по карте для выбора</li>
+                <li>Кликните по слоту для размещения выбранной карты</li>
+            </ul>
+
+            <h3>Клавиатура:</h3>
+            <ul>
+                <li>A-K-Q-J-T-9-8-7-6-5-4-3-2 - выбор ранга карты</li>
+                <li>H-S-D-C - выбор масти</li>
+                <li>Ctrl+Z - отменить последний ход</li>
+                <li>Esc - отменить выбор</li>
+                <li>Enter - подтвердить ход</li>
+            </ul>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Настройки</h2>
+            <h3>Основные параметры:</h3>
+            <ul>
+                <li><strong>Animation</strong>: 
+                    <ul>
+                        <li>Normal - обычная скорость анимации</li>
+                        <li>Fast - ускоренная анимация</li>
+                        <li>Off - анимация отключена</li>
+                    </ul>
+                </li>
+                <li><strong>AI Think Time</strong> - время на ход AI</li>
+                <li><strong>Fantasy Type</strong> - тип фантазии (Normal/Progressive/Disabled)</li>
+                <li><strong>Sound Effects</strong> - включение/выключение звуков</li>
+            </ul>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Советы для начинающих</h2>
+            <ul>
+                <li>Начинайте с размещения сильных комбинаций в нижнем ряду</li>
+                <li>Следите за вышедшими картами</li>
+                <li>Используйте режим тренировки для практики</li>
+                <li>Анализируйте статистику для улучшения игры</li>
+                <li>Старайтесь минимизировать количество фолов</li>
+                <li>Ищите возможности для скупов</li>
+            </ul>
+        </div>
+
+        <div class="tutorial-section">
+            <h2>Мобильная версия</h2>
+            <p>На мобильных устройствах доступны дополнительные жесты:</p>
+            <ul>
+                <li>Свайп влево - открыть боковую панель</li>
+                <li>Свайп вправо - закрыть боковую панель</li>
+                <li>Долгое нажатие на карту - показать возможные ходы</li>
+                <li>Двойное нажатие - отменить выбор</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/tutorial.js') }}"></script>
+</body>
+</html>
