@@ -1,3 +1,5 @@
+// web/static/js/game.js
+
 class Game {
     constructor() {
         this.state = {
@@ -9,7 +11,12 @@ class Game {
             gameStarted: false,
             inFantasy: false,
             removedCards: new Set(),
-            savedState: null
+            savedState: null,
+            fouls: 0,
+            totalMoves: 0,
+            scoops: 0,
+            totalGames: 0,
+            animationEnabled: true
         };
 
         this.ui = new GameUI(this);
@@ -17,6 +24,7 @@ class Game {
         this.socket = io();
         this.setupSocketHandlers();
         this.initializeEventListeners();
+        this.setupAnimationControl();
     }
 
     setupSocketHandlers() {
@@ -25,18 +33,21 @@ class Game {
         });
 
         this.socket.on('ai_thinking', (data) => {
-            this.ui.showAIThinking(data.player);
+            this.ui.showAIThinking(data.player, data.thinkTime);
         });
 
         this.socket.on('game_over', (result) => {
             this.handleGameOver(result);
         });
 
+        this.socket.on('fantasy_update', (data) => {
+            this.handleFantasyUpdate(data);
+        });
+
         this.socket.on('error', (error) => {
             this.ui.showError(error.message);
         });
 
-        // Обработка переподключения
         this.socket.on('connect', () => {
             if (this.state.gameStarted) {
                 this.loadSavedState();
@@ -56,21 +67,28 @@ class Game {
 
         document.getElementById('aiThinkTime').addEventListener('input', (e) => {
             this.state.aiThinkTime = parseInt(e.target.value);
-            document.getElementById('thinkTimeValue').textContent = e.target.value;
+            document.getElementById('thinkTimeValue').textContent = `${e.target.value}s`;
         });
 
+        // Управление анимацией
+        document.getElementById('animationControl').addEventListener('change', (e) => {
+            this.state.animationEnabled = e.target.value !== 'off';
+            document.body.classList.toggle('animations-disabled', !this.state.animationEnabled);
+        });
+
+        // Основные кнопки управления
         document.getElementById('startGame').addEventListener('click', () => this.startGame());
         document.getElementById('trainingMode').addEventListener('click', () => this.startTrainingMode());
         document.getElementById('viewStats').addEventListener('click', () => this.showFullStatistics());
+        document.getElementById('tutorial').addEventListener('click', () => this.showTutorial());
 
         // Обработка навигации
         window.onpopstate = (event) => {
-            event.preventDefault();
             if (this.state.gameStarted) {
                 this.saveCurrentState();
-                this.showConfirmDialog(
-                    "Exit game?",
-                    "Do you want to return to menu? Your progress will be saved.",
+                this.ui.showConfirmDialog(
+                    "Выйти из игры?",
+                    "Хотите вернуться в меню? Ваш прогресс будет сохранен.",
                     () => this.returnToMenu(),
                     () => history.pushState(null, '', window.location.href)
                 );
@@ -84,10 +102,19 @@ class Game {
             }
         };
 
-        // Обработчик для мобильного меню
-        document.getElementById('menuButton')?.addEventListener('click', () => {
-            this.ui.toggleMobileMenu();
-        });
+        // Клавиатурные сокращения
+        document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
+    }
+
+    setupAnimationControl() {
+        const animationControl = document.getElementById('animationControl');
+        if (animationControl) {
+            animationControl.innerHTML = `
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+                <option value="off">Off</option>
+            `;
+        }
     }
 
     async setPlayerCount(count) {
@@ -100,7 +127,7 @@ class Game {
         try {
             const response = await fetch('/api/agents');
             const data = await response.json();
-            if (data.agents) {
+            if (data.status === 'ok') {
                 this.state.availableAgents = data.agents;
                 this.ui.updateAgentSelectors(data.agents, this.state.players);
             }
@@ -110,14 +137,14 @@ class Game {
         }
     }
 
-async startGame() {
+    async startGame() {
         try {
-            // Собираем конфигурацию игры
             const gameConfig = {
                 players: this.state.players,
                 fantasyMode: this.state.fantasyMode,
                 aiThinkTime: this.state.aiThinkTime,
-                agents: this.collectAgentConfigs()
+                agents: this.collectAgentConfigs(),
+                animationEnabled: this.state.animationEnabled
             };
 
             const response = await fetch('/api/new_game', {
@@ -168,10 +195,8 @@ async startGame() {
     async startGameLoop() {
         while (this.state.gameStarted && !this.state.gameOver) {
             if (this.state.currentPlayer === 0) {
-                // Ход человека
                 await this.handlePlayerTurn();
             } else {
-                // Ход AI
                 await this.handleAITurn();
             }
             await this.checkGameState();
@@ -186,7 +211,7 @@ async startGame() {
     }
 
     async handleAITurn() {
-        this.ui.showAIThinking();
+        this.ui.showAIThinking(this.state.currentPlayer);
         try {
             const response = await fetch('/api/ai_move', {
                 method: 'POST',
@@ -201,129 +226,231 @@ async startGame() {
 
             const data = await response.json();
             if (data.status === 'ok') {
+            if (this.state.animationEnabled) {
                 await this.ui.animateMove(data.move);
-                this.updateGameState(data.game_state);
-            }
-        } catch (error) {
-            console.error('AI move failed:', error);
-            this.ui.showError('AI move failed');
-        } finally {
-            this.ui.hideAIThinking();
-        }
-    }
-
-    async makeMove(card, position) {
-        try {
-            const response = await fetch('/api/make_move', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    gameId: this.state.gameId,
-                    card: card,
-                    position: position
-                })
-            });
-
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.updateGameState(data.game_state);
-                if (this.resolvePlayerTurn) {
-                    this.resolvePlayerTurn();
-                }
-                return true;
             } else {
-                this.ui.showError(data.message || 'Invalid move');
-                return false;
+                this.ui.applyMove(data.move);
             }
-        } catch (error) {
-            console.error('Move failed:', error);
-            this.ui.showError('Failed to make move');
+            this.updateGameState(data.game_state);
+            
+            // Проверяем на фолы и скупы
+            if (data.move.isFoul) {
+                this.state.fouls++;
+            }
+            if (data.move.isScoop) {
+                this.state.scoops++;
+            }
+            this.state.totalMoves++;
+        }
+    } catch (error) {
+        console.error('AI move failed:', error);
+        this.ui.showError('AI move failed');
+    } finally {
+        this.ui.hideAIThinking();
+    }
+}
+
+async makeMove(card, position) {
+    try {
+        const response = await fetch('/api/make_move', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                gameId: this.state.gameId,
+                card: card,
+                position: position
+            })
+        });
+
+        const data = await response.json();
+        if (data.status === 'ok') {
+            if (this.state.animationEnabled) {
+                await this.ui.animateMove({ card, position });
+            } else {
+                this.ui.applyMove({ card, position });
+            }
+            
+            this.updateGameState(data.game_state);
+            
+            // Обновляем статистику
+            if (data.move.isFoul) {
+                this.state.fouls++;
+            }
+            if (data.move.isScoop) {
+                this.state.scoops++;
+            }
+            this.state.totalMoves++;
+            
+            if (this.resolvePlayerTurn) {
+                this.resolvePlayerTurn();
+            }
+            return true;
+        } else {
+            this.ui.showError(data.message || 'Invalid move');
             return false;
         }
+    } catch (error) {
+        console.error('Move failed:', error);
+        this.ui.showError('Failed to make move');
+        return false;
     }
+}
 
-    updateGameState(newState) {
-        this.state = { ...this.state, ...newState };
-        this.ui.updateGameState(this.state);
-        this.stats.updateStats(this.state);
-        
-        // Сохраняем состояние после каждого обновления
-        this.saveCurrentState();
-    }
+updateGameState(newState) {
+    this.state = { ...this.state, ...newState };
+    this.ui.updateGameState(this.state);
+    this.stats.updateStats({
+        foulsRate: this.state.fouls / this.state.totalMoves,
+        scoopsRate: this.state.scoops / this.state.totalMoves,
+        ...this.state
+    });
+    
+    this.saveCurrentState();
+}
 
 async checkGameState() {
-        try {
-            const response = await fetch(`/api/game/state?gameId=${this.state.gameId}`);
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.updateGameState(data.game_state);
-                if (data.game_state.gameOver) {
-                    this.handleGameOver(data.game_state.result);
-                }
+    try {
+        const response = await fetch(`/api/game/state?gameId=${this.state.gameId}`);
+        const data = await response.json();
+        if (data.status === 'ok') {
+            this.updateGameState(data.game_state);
+            if (data.game_state.gameOver) {
+                this.handleGameOver(data.game_state.result);
             }
-        } catch (error) {
-            console.error('Failed to check game state:', error);
+        }
+    } catch (error) {
+        console.error('Failed to check game state:', error);
+    }
+}
+
+handleGameOver(result) {
+    this.state.gameStarted = false;
+    this.state.gameOver = true;
+    this.state.totalGames++;
+    
+    // Обновляем общую статистику
+    this.stats.saveGameResult({
+        ...result,
+        foulsRate: this.state.fouls / this.state.totalMoves,
+        scoopsRate: this.state.scoops / this.state.totalMoves
+    });
+    
+    this.ui.showGameOver(result);
+    localStorage.removeItem('savedGameState');
+}
+
+handleFantasyUpdate(data) {
+    if (data.status === 'active') {
+        this.state.inFantasy = true;
+        this.ui.showFantasyMode();
+    } else {
+        this.state.inFantasy = false;
+        this.ui.hideFantasyMode();
+    }
+}
+
+handleKeyboardShortcuts(e) {
+    if (e.ctrlKey || e.metaKey) {
+        switch(e.key) {
+            case 'z':
+                e.preventDefault();
+                this.undoLastMove();
+                break;
+            case 's':
+                e.preventDefault();
+                this.saveCurrentState();
+                break;
+            case 'f':
+                e.preventDefault();
+                this.toggleFullscreen();
+                break;
         }
     }
+}
 
-    handleGameOver(result) {
-        this.state.gameStarted = false;
-        this.state.gameOver = true;
-        this.ui.showGameOver(result);
-        this.stats.saveGameResult(result);
+async undoLastMove() {
+    if (!this.state.gameStarted || this.state.currentPlayer !== 0) return;
+    
+    try {
+        const response = await fetch('/api/undo_move', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                gameId: this.state.gameId
+            })
+        });
+
+        const data = await response.json();
+        if (data.status === 'ok') {
+            this.updateGameState(data.game_state);
+            this.ui.undoLastMove();
+        }
+    } catch (error) {
+        console.error('Failed to undo move:', error);
+        this.ui.showError('Failed to undo move');
+    }
+}
+
+toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+showTutorial() {
+    this.ui.showTutorial(`
+        <h2>Как играть в OFC Poker</h2>
         
-        // Очищаем сохраненное состояние
-        localStorage.removeItem('savedGameState');
-    }
-
-    async startAIvsAI() {
-        try {
-            const agent1 = document.querySelector('#agent1Select').value;
-            const agent2 = document.querySelector('#agent2Select').value;
+        <h3>Основные правила</h3>
+        <p>Open Face Chinese Poker - это покерная игра, где каждый игрок должен составить три покерных комбинации,
+        располагая карты в три ряда: верхний (3 карты), средний (5 карт) и нижний (5 карт).</p>
+        
+        <h3>Размещение карт</h3>
+        <ul>
+            <li>Карты можно размещать только сверху вниз</li>
+            <li>Нижняя комбинация должна быть сильнее средней</li>
+            <li>Средняя комбинация должна быть сильнее верхней</li>
+        </ul>
+        
+        <h3>Фантазия</h3>
+        <p>Фантазия активируется, когда игрок собирает определенные комбинации. В режиме фантазии
+        игрок получает дополнительные карты для размещения.</p>
+        
+        <h3>Статистика</h3>
+        <ul>
+            <li>Fouls Rate - процент нарушений правила старшинства комбинаций</li>
+            <li>Scoops Rate - процент ситуаций, когда игрок выигрывает все три ряда</li>
+        </ul>
+        
+        <h3>Управление</h3>
+        <ul>
+            <li>Перетащите карту в нужную позицию</li>
+            <li>Ctrl+Z - отменить последний ход</li>
+            <li>Ctrl+S - сохранить игру</li>
+            <li>Ctrl+F - полноэкранный режим</li>
+        </ul>
+        
+        <h3>Настройки</h3>
+        <ul>
+            <li>Animation: Normal/Fast/Off - управление анимациями</li>
+            <li>AI Think Time - время на ход AI</li>
+            <li>Fantasy Type - тип фантазии (Normal/Progressive/Disabled)</li>
+                <li>Sound Effects - включение/выключение звуковых эффектов</li>
+            </ul>
             
-            const response = await fetch('/api/ai_vs_ai', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    agent1: agent1,
-                    agent2: agent2,
-                    think_time: this.state.aiThinkTime
-                })
-            });
-
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.state.gameStarted = true;
-                this.state.gameId = data.game_id;
-                this.state.isAIvsAI = true;
-                this.ui.switchToGame();
-                this.initializeGameState(data.game_state);
-            }
-        } catch (error) {
-            console.error('Failed to start AI vs AI game:', error);
-            this.ui.showError('Failed to start AI vs AI game');
-        }
-    }
-
-    startTrainingMode() {
-        window.location.href = '/training';
-    }
-
-    async showFullStatistics() {
-        try {
-            const response = await fetch('/api/statistics');
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.ui.showStatisticsModal(data.statistics);
-            }
-        } catch (error) {
-            console.error('Failed to load statistics:', error);
-            this.ui.showError('Failed to load statistics');
-        }
+            <h3>Советы</h3>
+            <ul>
+                <li>Планируйте размещение карт заранее</li>
+                <li>Следите за вышедшими картами</li>
+                <li>Используйте статистику для улучшения игры</li>
+                <li>В мобильной версии можно использовать свайпы для навигации</li>
+            </ul>`);
     }
 
     saveCurrentState() {
@@ -337,7 +464,6 @@ async checkGameState() {
         try {
             localStorage.setItem('savedGameState', JSON.stringify(saveState));
             
-            // Также сохраняем на сервере
             fetch('/api/save_game_state', {
                 method: 'POST',
                 headers: {
@@ -352,7 +478,6 @@ async checkGameState() {
 
     async loadSavedState() {
         try {
-            // Сначала пробуем загрузить с сервера
             const serverResponse = await fetch('/api/load_game_state', {
                 method: 'POST'
             });
@@ -365,12 +490,10 @@ async checkGameState() {
                 }
             }
 
-            // Если не получилось, пробуем локальное сохранение
             const savedState = localStorage.getItem('savedGameState');
             if (savedState) {
                 const { timestamp, gameState } = JSON.parse(savedState);
                 
-                // Проверяем, не устарело ли сохранение (24 часа)
                 if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
                     this.initializeGameState(gameState);
                 } else {
@@ -389,19 +512,23 @@ async checkGameState() {
         history.pushState(null, '', '/');
     }
 
-    showConfirmDialog(title, message, onConfirm, onCancel) {
-        this.ui.showConfirmDialog({
-            title,
-            message,
-            onConfirm: () => {
-                onConfirm();
-                this.ui.hideConfirmDialog();
-            },
-            onCancel: () => {
-                if (onCancel) onCancel();
-                this.ui.hideConfirmDialog();
-            }
-        });
+    calculateRates() {
+        return {
+            foulsRate: this.state.totalMoves ? (this.state.fouls / this.state.totalMoves) * 100 : 0,
+            scoopsRate: this.state.totalMoves ? (this.state.scoops / this.state.totalMoves) * 100 : 0
+        };
+    }
+
+    getGameStatistics() {
+        const rates = this.calculateRates();
+        return {
+            totalGames: this.state.totalGames,
+            totalMoves: this.state.totalMoves,
+            fouls: this.state.fouls,
+            scoops: this.state.scoops,
+            foulsRate: rates.foulsRate.toFixed(1) + '%',
+            scoopsRate: rates.scoopsRate.toFixed(1) + '%'
+        };
     }
 }
 
@@ -435,10 +562,8 @@ function handleTouchMove(evt) {
 
     if (Math.abs(xDiff) > Math.abs(yDiff)) {
         if (xDiff > 0) {
-            // Свайп влево - открыть боковую панель
             window.game.ui.openSidePanel();
         } else {
-            // Свайп вправо - закрыть боковую панель
             window.game.ui.closeSidePanel();
         }
     }
