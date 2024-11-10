@@ -5,8 +5,8 @@ import tensorflow as tf
 from datetime import datetime
 from prometheus_client import Counter, Histogram
 from logging.config import dictConfig
-from flask import Flask, render_template, jsonify, request, g, session, redirect, url_for
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, jsonify, request, g, session, redirect, url_for, make_response, send_from_directory
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from typing import Optional, Dict, Any, List
 import uuid
 import asyncio
@@ -21,9 +21,10 @@ tf.config.set_visible_devices([], 'GPU')
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
-# Импорты
-from core.game import Game, GameState, GameResult
-from core.fantasy import FantasyMode
+# Импорты из проекта
+from core.game import Game, GameState, GameResult, Card, Street
+from core.fantasy import FantasyMode, FantasyManager
+from core.board import Board
 from agents.random import RandomAgent
 from agents.rl.dqn import DQNAgent
 from agents.rl.a3c import A3CAgent
@@ -242,6 +243,13 @@ async def process_ai_move(game: Game):
                 agent=get_agent_display_name(game.current_agent),
                 action='move_success'
             ).inc()
+            
+            # Проверяем на фолы и скупы
+            if ai_move.is_foul:
+                game.state.fouls += 1
+            if ai_move.is_scoop:
+                game.state.scoops += 1
+            game.state.totalMoves += 1
         else:
             AI_METRICS.labels(
                 agent=get_agent_display_name(game.current_agent),
@@ -341,17 +349,12 @@ def index():
         agents=AVAILABLE_AGENTS
     )
 
-@app.route('/mobile')
-def mobile():
-    """Мобильная версия"""
-    if not is_mobile():
-        return redirect(url_for('index'))
-    
-    preferences = get_client_preferences()
+@app.route('/tutorial')
+def tutorial():
+    """Страница обучения"""
     return render_template(
-        'mobile.html',
-        preferences=preferences,
-        agents=AVAILABLE_AGENTS
+        'tutorial.html',
+        preferences=get_client_preferences()
     )
 
 @app.route('/training')
@@ -382,82 +385,201 @@ def statistics():
             preferences=get_client_preferences()
         )
 
-@app.route('/settings', methods=['GET', 'POST'])
-def settings():
-    """Страница настроек"""
-    if request.method == 'POST':
-        try:
-            new_preferences = request.get_json()
-            session['preferences'].update(new_preferences)
-            return jsonify({'status': 'ok'})
-        except Exception as e:
-            logger.error(f"Error updating settings: {e}", exc_info=True)
-            return jsonify({'error': str(e)}), 400
+# API маршруты
+@app.route('/api/new_game', methods=['POST'])
+@handle_errors
+def new_game():
+    """Создает новую игру"""
+    data = request.get_json()
+    game_id = str(uuid.uuid4())
     
-    return render_template(
-        'settings.html',
-        preferences=get_client_preferences(),
-        agents=AVAILABLE_AGENTS
-    )
-
-@app.route('/tutorial')
-def tutorial():
-    """Страница обучения"""
-    return render_template(
-        'tutorial.html',
-        preferences=get_client_preferences()
-    )
-
-@app.route('/game/<game_id>')
-@require_game
-def game_page(game_id, game):
-    """Страница игры"""
-    try:
-        return render_template(
-            'game.html',
-            game=game,
-            preferences=get_client_preferences(),
-            state=game.get_state()
+    game_config = {
+        'players': data.get('players', 2),
+        'fantasy_mode': (FantasyMode.PROGRESSIVE 
+                        if data.get('progressive_fantasy') 
+                        else FantasyMode.NORMAL),
+        'think_time': data.get('aiThinkTime', 30),
+        'agents': [],
+        'is_mobile': is_mobile()
+    }
+    
+    # Создаем AI агентов
+    for i in range(game_config['players'] - 1):
+        agent_type = data.get(f'agent_{i}', 'random')
+        agent = create_agent(
+            agent_type=agent_type,
+            position=i+1,
+            think_time=game_config['think_time']
         )
-    except Exception as e:
-        logger.error(f"Error loading game page: {e}", exc_info=True)
-        return redirect(url_for('index'))
+        game_config['agents'].append(agent)
+    
+    game = app_state.create_game(game_id, game_config)
+    game.start()
+    
+    session['current_game_id'] = game_id
+    emit_game_update(game, 'game_started')
+    
+    GAME_METRICS.labels(type='new_game').inc()
+    
+    return jsonify({
+        'status': 'ok',
+        'game_id': game_id,
+        'game_state': game.get_state()
+    })
 
-@app.route('/ai-arena')
-def ai_arena():
-    """Страница AI vs AI"""
-    return render_template(
-        'ai_arena.html',
-        preferences=get_client_preferences(),
-        agents=AVAILABLE_AGENTS
+@app.route('/api/game/move', methods=['POST'])
+@require_game
+@handle_errors
+def make_move(game):
+    """Выполняет ход игрока"""
+    data = request.get_json()
+    success = game.make_move(
+        card=Card.from_dict(data.get('card')),
+        position=data.get('position')
     )
+    
+    if success:
+        # Проверяем на фолы и скупы
+        if data.get('is_foul'):
+            game.state.fouls += 1
+        if data.get('is_scoop'):
+            game.state.scoops += 1
+        game.state.totalMoves += 1
+        
+        emit_game_update(game)
+        
+        # Обрабатываем ход AI если игра не закончена
+        if not game.is_game_over():
+            asyncio.create_task(process_ai_moves(game))
+        else:
+            check_game_over(game)
+            
+        return jsonify({
+            'status': 'ok',
+            'game_state': game.get_state()
+        })
+    
+    return jsonify({'error': 'Invalid move'}), 400
 
-# Обработка ошибок для основных маршрутов
-@app.errorhandler(404)
-def page_not_found(e):
-    """Обработка 404 ошибки"""
-    return render_template(
-        'error.html',
-        error="Page not found",
-        preferences=get_client_preferences()
-    ), 404
+async def process_ai_moves(game):
+    """Обрабатывает ходы AI последовательно"""
+    while not game.is_game_over() and game.current_player != 1:
+        success = await process_ai_move(game)
+        if not success:
+            break
+        if game.is_game_over():
+            check_game_over(game)
+            break
 
-@app.errorhandler(500)
-def internal_server_error(e):
-    """Обработка 500 ошибки"""
-    return render_template(
-        'error.html',
-        error="Internal server error",
-        preferences=get_client_preferences()
-    ), 500
+@app.route('/api/game/fantasy', methods=['GET', 'POST'])
+@require_game
+@handle_errors
+def handle_fantasy(game):
+    """Обработка фантазии"""
+    if request.method == 'POST':
+        success = game.check_fantasy_entry(request.get_json().get('player'))
+        return jsonify({
+            'status': 'ok',
+            'fantasy_active': success,
+            'game_state': game.get_state()
+        })
+    else:
+        return jsonify({
+            'status': 'ok',
+            'fantasy_status': game.get_fantasy_status(),
+            'statistics': game.get_fantasy_statistics()
+        })
 
-# Вспомогательные маршруты
+@app.route('/api/game/undo', methods=['POST'])
+@require_game
+@handle_errors
+def undo_move(game):
+    """Отменяет последний ход"""
+    if game.undo_last_move():
+        emit_game_update(game)
+        return jsonify({
+            'status': 'ok',
+            'game_state': game.get_state()
+        })
+    return jsonify({'error': 'Cannot undo move'}), 400
+
+@app.route('/api/training/start', methods=['POST'])
+@handle_errors
+def start_training():
+    """Начинает тренировочную сессию"""
+    data = request.get_json()
+    session_id = str(uuid.uuid4())
+    
+    config = TrainingConfig(
+        fantasy_mode=data.get('fantasy_mode', False),
+        progressive_fantasy=data.get('progressive_fantasy', False),
+        think_time=data.get('think_time', 30)
+    )
+    
+    training_session = app_state.create_training_session(session_id, config)
+    session['training_session_id'] = session_id
+    
+    return jsonify({
+        'status': 'ok',
+        'session_id': session_id,
+        'initial_state': training_session.get_state()
+    })
+
+@app.route('/api/training/analyze', methods=['POST'])
+@handle_errors
+def analyze_training_position():
+    """Анализирует позицию в режиме тренировки"""
+    session_id = session.get('training_session_id')
+    if not session_id:
+        return jsonify({'error': 'No active training session'}), 400
+        
+    training_session = app_state.get_training_session(session_id)
+    if not training_session:
+        return jsonify({'error': 'Training session not found'}), 404
+        
+    analysis = training_session.analyze_position(
+        request.get_json().get('board_state')
+    )
+    
+    return jsonify({
+        'status': 'ok',
+        'analysis': analysis
+    })
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+@handle_errors
+def handle_settings():
+    """Обработка пользовательских настроек"""
+    if request.method == 'POST':
+        settings = request.get_json()
+        session['preferences'] = {
+            'theme': settings.get('theme', 'light'),
+            'animation_speed': settings.get('animation_speed', 'normal'),
+            'sound_enabled': settings.get('sound_enabled', True)
+        }
+        return jsonify({'status': 'ok'})
+    
+    return jsonify({
+        'status': 'ok',
+        'preferences': get_client_preferences()
+    })
+
+@app.route('/api/statistics/full')
+@handle_errors
+def get_full_statistics():
+    """Возвращает полную статистику"""
+    stats = analytics_manager.get_full_statistics()
+    return jsonify({
+        'status': 'ok',
+        'statistics': stats
+    })
+
 @app.route('/manifest.json')
 def manifest():
     """PWA manifest"""
     return jsonify({
         "name": "Open Face Chinese Poker",
-        "short_name": "OFCP",
+        "short_name": "OFC Poker",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#ffffff",
@@ -493,234 +615,23 @@ def offline():
         preferences=get_client_preferences()
     )
 
-# API маршруты
-@app.route('/api/agents')
-@handle_errors
-def get_available_agents():
-    """Возвращает список доступных агентов"""
-    agents_list = [
-        {
-            'id': agent_id,
-            'name': info['display_name'],
-            'description': info['class'].__doc__,
-            'capabilities': {
-                'supports_fantasy': hasattr(info['class'], 'handle_fantasy'),
-                'supports_progressive': hasattr(info['class'], 'handle_progressive'),
-                'has_learning': hasattr(info['class'], 'learn')
-            }
-        }
-        for agent_id, info in AVAILABLE_AGENTS.items()
-    ]
-    
-    return jsonify({
-        'status': 'ok',
-        'agents': agents_list
-    })
-
-@app.route('/api/new_game', methods=['POST'])
-@handle_errors
-def new_game():
-    """Создает новую игру"""
-    data = request.get_json()
-    game_id = str(uuid.uuid4())
-    
-    # Базовая конфигурация
-    game_config = {
-        'players': data.get('players', 2),
-        'fantasy_mode': (FantasyMode.PROGRESSIVE 
-                        if data.get('progressive_fantasy') 
-                        else FantasyMode.NORMAL),
-        'think_time': data.get('aiThinkTime', 30),
-        'agents': [],
-        'is_mobile': is_mobile()
-    }
-    
-    # Создаем AI агентов
-    for i in range(game_config['players'] - 1):
-        agent_type = data.get(f'agent_{i}', 'random')
-        agent = create_agent(
-            agent_type=agent_type,
-            position=i+1,
-            think_time=game_config['think_time']
-        )
-        game_config['agents'].append(agent)
-    
-    # Создаем и запускаем игру
-    game = app_state.create_game(game_id, game_config)
-    game.start()
-    
-    # Сохраняем ID игры в сессии
-    session['current_game_id'] = game_id
-    
-    # Отправляем начальное состояние через WebSocket
-    emit_game_update(game, 'game_started')
-    
-    GAME_METRICS.labels(type='new_game').inc()
-    
-    return jsonify({
-        'status': 'ok',
-        'game_id': game_id,
-        'game_state': game.get_state()
-    })
-
-@app.route('/api/make_move', methods=['POST'])
-@require_game
-@handle_errors
-def make_move(game):
-    """Выполняет ход в игре"""
-    data = request.get_json()
-    
-    # Создаем объект карты из данных
-    card = Card.from_dict(data.get('card'))
-    street = Street(data.get('street'))
-    
-    # Делаем ход
-    success = game.make_move(1, card, street)
-    if not success:
-        return jsonify({'error': 'Invalid move'}), 400
-
-    # Отправляем обновление состояния
-    emit_game_update(game, 'move_made')
-
-    # Обрабатываем ход AI если игра не закончена
-    if not game.is_game_over():
-        asyncio.create_task(process_ai_moves(game))
-    else:
-        check_game_over(game)
-
-    GAME_METRICS.labels(type='move').inc()
-    
-    return jsonify({
-        'status': 'ok',
-        'game_state': game.get_state()
-    })
-
-async def process_ai_moves(game):
-    """Обрабатывает ходы AI последовательно"""
-    while not game.is_game_over() and game.current_player != 1:
-        success = await process_ai_move(game)
-        if not success:
-            break
-        if game.is_game_over():
-            check_game_over(game)
-            break
-
-@app.route('/api/ai_vs_ai', methods=['POST'])
-@handle_errors
-def create_ai_vs_ai_game():
-    """Создает игру AI против AI"""
-    data = request.get_json()
-    game_id = str(uuid.uuid4())
-    
-    # Создаем агентов
-    agent1 = create_agent(
-        agent_type=data.get('agent1', 'random'),
-        position=1,
-        think_time=data.get('think_time', 30)
-    )
-    
-    agent2 = create_agent(
-        agent_type=data.get('agent2', 'random'),
-        position=2,
-        think_time=data.get('think_time', 30)
-    )
-    
-    game_config = {
-        'players': 2,
-        'fantasy_mode': FantasyMode.NORMAL,
-        'think_time': data.get('think_time', 30),
-        'agents': [agent1, agent2],
-        'is_ai_vs_ai': True
-    }
-    
-    game = app_state.create_game(game_id, game_config)
-    game.start()
-    
-    session['current_game_id'] = game_id
-    
-    # Запускаем игровой процесс в фоне
-    socketio.start_background_task(target=run_ai_vs_ai_game, game_id=game_id)
-    
-    return jsonify({
-        'status': 'ok',
-        'game_id': game_id,
-        'game_state': game.get_state()
-    })
-
-@app.route('/api/statistics/full')
-@handle_errors
-def get_full_statistics():
-    """Возвращает полную статистику"""
-    stats = analytics_manager.get_full_statistics()
-    return jsonify({
-        'status': 'ok',
-        'statistics': stats
-    })
-
-@app.route('/api/training/start', methods=['POST'])
-@handle_errors
-def start_training():
-    """Начинает тренировочную сессию"""
-    data = request.get_json()
-    session_id = str(uuid.uuid4())
-    
-    config = TrainingConfig(
-        fantasy_mode=data.get('fantasy_mode', False),
-        progressive_fantasy=data.get('progressive_fantasy', False),
-        think_time=data.get('think_time', 30)
-    )
-    
-    training_session = app_state.create_training_session(session_id, config)
-    session['training_session_id'] = session_id
-    
-    return jsonify({
-        'status': 'ok',
-        'session_id': session_id,
-        'initial_state': training_session.get_state()
-    })
-
-@app.route('/api/save_state', methods=['POST'])
-@require_game
-@handle_errors
-def save_state(game):
-    """Сохраняет текущее состояние игры"""
-    if save_game_progress(game):
-        return jsonify({'status': 'ok'})
-    return jsonify({'error': 'Failed to save game state'}), 500
-
-@app.route('/api/load_state', methods=['POST'])
-@handle_errors
-def load_state():
-    """Загружает сохраненное состояние игры"""
-    game = load_game_progress()
-    if game:
-        return jsonify({
-            'status': 'ok',
-            'game_id': session['current_game_id'],
-            'game_state': game.get_state()
-        })
-    return jsonify({'error': 'No saved game state found'}), 404
-
-# WebSocket события и обработчики
+# WebSocket обработчики
 @socketio.on('connect')
 def handle_connect():
     """Обработка подключения WebSocket"""
     WEBSOCKET_CONNECTIONS.inc()
     logger.info(f"WebSocket connected: {request.sid}")
     
-    # Присоединяем клиента к персональной комнате
     room = session.get('user_id')
     if room:
-        socketio.join_room(room)
+        join_room(room)
     
-    # Отправляем текущее состояние если есть активная игра
     game_id = session.get('current_game_id')
     if game_id:
         game = app_state.get_game(game_id)
         if game:
             emit('game_state', game.get_state())
             
-    # Отправляем настройки клиента
     emit('client_preferences', get_client_preferences())
 
 @socketio.on('disconnect')
@@ -728,37 +639,35 @@ def handle_disconnect():
     """Обработка отключения WebSocket"""
     logger.info(f"WebSocket disconnected: {request.sid}")
     
-    # Сохраняем состояние игры при отключении
     game_id = session.get('current_game_id')
     if game_id:
         game = app_state.get_game(game_id)
         if game:
             save_game_progress(game)
     
-    # Покидаем комнату
     room = session.get('user_id')
     if room:
-        socketio.leave_room(room)
+        leave_room(room)
 
-@socketio.on('request_game_state')
+@socketio.on('request_analysis')
 @handle_errors
-def handle_state_request():
-    """Обработка запроса текущего состояния игры"""
+def handle_analysis_request(data):
+    """Обработка запроса анализа позиции"""
     game_id = session.get('current_game_id')
-    if game_id:
-        game = app_state.get_game(game_id)
-        if game:
-            emit('game_state', game.get_state())
-
-@socketio.on('player_ready')
-def handle_player_ready(data):
-    """Обработка готовности игрока"""
-    game_id = session.get('current_game_id')
-    if game_id:
-        game = app_state.get_game(game_id)
-        if game:
-            game.player_ready(data.get('player_id'))
-            emit_game_update(game, 'player_ready')
+    if not game_id:
+        emit('error', {'message': 'No active game'})
+        return
+        
+    game = app_state.get_game(game_id)
+    if not game:
+        emit('error', {'message': 'Game not found'})
+        return
+        
+    analysis = game.analyze_position(data.get('position'))
+    emit('position_analysis', {
+        'analysis': analysis,
+        'position': data.get('position')
+    })
 
 @socketio.on('chat_message')
 def handle_chat_message(data):
@@ -771,120 +680,13 @@ def handle_chat_message(data):
             'timestamp': datetime.now().isoformat()
         }, room=room)
 
-@socketio.on('request_ai_explanation')
-@handle_errors
-def handle_ai_explanation_request(data):
-    """Запрос объяснения хода AI"""
-    game_id = session.get('current_game_id')
-    if not game_id:
-        return
-        
-    game = app_state.get_game(game_id)
-    if not game:
-        return
-        
-    move_index = data.get('move_index')
-    if move_index is None:
-        return
-        
-    try:
-        explanation = game.get_ai_move_explanation(move_index)
-        emit('ai_explanation', {
-            'move_index': move_index,
-            'explanation': explanation
-        })
-    except Exception as e:
-        logger.error(f"Error getting AI explanation: {e}", exc_info=True)
-        emit('error', {'message': 'Failed to get AI explanation'})
-
-@socketio.on('training_action')
-@handle_errors
-def handle_training_action(data):
-    """Обработка действий в режиме тренировки"""
-    session_id = session.get('training_session_id')
-    if not session_id:
-        emit('error', {'message': 'No active training session'})
-        return
-        
-    training_session = app_state.get_training_session(session_id)
-    if not training_session:
-        emit('error', {'message': 'Training session not found'})
-        return
-        
-    action_type = data.get('action')
-    if action_type == 'distribute':
-        result = training_session.distribute_cards(data.get('cards', []))
-        emit('training_update', {
-            'action': 'distribute',
-            'result': result
-        })
-    elif action_type == 'reset':
-        training_session.reset()
-        emit('training_update', {
-            'action': 'reset',
-            'state': training_session.get_state()
-        })
-    elif action_type == 'analyze':
-        analysis = training_session.analyze_position()
-        emit('training_update', {
-            'action': 'analyze',
-            'analysis': analysis
-        })
-
-async def run_ai_vs_ai_game(game_id: str):
-    """Запускает процесс игры AI против AI"""
-    try:
-        game = app_state.get_game(game_id)
-        if not game:
-            return
-            
-        while not game.is_game_over():
-            # Получаем и делаем ход текущего AI
-            success = await process_ai_move(game)
-            if not success:
-                break
-                
-            # Добавляем задержку для визуализации
-            await asyncio.sleep(1)
-            
-            if game.is_game_over():
-                break
-        
-        # Обрабатываем окончание игры
-        if game.is_game_over():
-            check_game_over(game)
-            
-    except Exception as e:
-        logger.error(f"Error in AI vs AI game: {e}", exc_info=True)
-        room = session.get('user_id')
-        if room:
-            socketio.emit('error', {
-                'message': 'AI vs AI game failed',
-                'details': str(e)
-            }, room=room)
-
 @socketio.on_error()
 def handle_error(e):
     """Глобальный обработчик ошибок WebSocket"""
     logger.error(f"WebSocket error: {e}", exc_info=True)
     emit('error', {'message': 'Internal server error'})
 
-# Периодическое обновление статистики
-def emit_statistics_updates():
-    """Периодически отправляет обновления статистики"""
-    while True:
-        try:
-            stats = analytics_manager.get_global_statistics()
-            socketio.emit('statistics_update', stats)
-            socketio.sleep(30)  # Обновление каждые 30 секунд
-        except Exception as e:
-            logger.error(f"Error updating statistics: {e}", exc_info=True)
-            socketio.sleep(5)
-
-# Запуск фоновых задач
-socketio.start_background_task(emit_statistics_updates)
-
-# Обработка ошибок и мониторинг здоровья
+# Обработка ошибок
 @app.errorhandler(404)
 def not_found_error(error):
     """Обработка ошибки 404"""
@@ -909,118 +711,16 @@ def internal_error(error):
         preferences=get_client_preferences()
     ), 500
 
-@app.route('/health')
-def health_check():
-    """Проверка здоровья приложения"""
-    try:
-        # Проверяем основные компоненты
-        health_status = {
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'components': {
-                'database': check_database_health(),
-                'redis': check_redis_health(),
-                'ai_models': check_ai_models_health()
-            },
-            'metrics': {
-                'active_games': len(app_state.get_active_games()),
-                'active_training_sessions': len(app_state.get_active_training_sessions()),
-                'connected_users': len(app_state._active_users),
-                'memory_usage': get_memory_usage(),
-                'cpu_usage': get_cpu_usage()
-            },
-            'version': config.get('app.version', 'unknown')
-        }
-
-        # Определяем общий статус
-        components_healthy = all(
-            status == 'healthy' 
-            for status in health_status['components'].values()
-        )
-        
-        if not components_healthy:
-            health_status['status'] = 'degraded'
-            
-        status_code = 200 if components_healthy else 503
-        
-        return jsonify(health_status), status_code
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True)
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 503
-
-def check_database_health() -> str:
-    """Проверка здоровья базы данных"""
-    try:
-        # Здесь должна быть проверка подключения к БД
-        return 'healthy'
-    except Exception as e:
-        logger.error(f"Database health check failed: {e}", exc_info=True)
-        return 'unhealthy'
-
-def check_redis_health() -> str:
-    """Проверка здоровья Redis"""
-    try:
-        # Здесь должна быть проверка подключения к Redis
-        return 'healthy'
-    except Exception as e:
-        logger.error(f"Redis health check failed: {e}", exc_info=True)
-        return 'unhealthy'
-
-def check_ai_models_health() -> str:
-    """Проверка здоровья AI моделей"""
-    try:
-        # Проверяем доступность всех AI моделей
-        for agent_type, info in AVAILABLE_AGENTS.items():
-            if not info['class'].check_model_available():
-                return 'degraded'
-        return 'healthy'
-    except Exception as e:
-        logger.error(f"AI models health check failed: {e}", exc_info=True)
-        return 'unhealthy'
-
-def get_memory_usage() -> dict:
-    """Получает информацию об использовании памяти"""
-    import psutil
-    process = psutil.Process()
-    memory_info = process.memory_info()
-    return {
-        'rss': memory_info.rss,
-        'vms': memory_info.vms,
-        'percent': process.memory_percent()
-    }
-
-def get_cpu_usage() -> dict:
-    """Получает информацию об использовании CPU"""
-    import psutil
-    process = psutil.Process()
-    return {
-        'percent': process.cpu_percent(),
-        'threads': process.num_threads()
-    }
-
 # Запуск приложения
 if __name__ == '__main__':
-    # Получаем настройки запуска
     port = int(os.environ.get('PORT', 5000))
     debug = config.get('web.debug', False)
     
-    # Логируем информацию о запуске
     logger.info(f"Starting server on port {port} (debug={debug})")
     logger.info(f"Available agents: {list(AVAILABLE_AGENTS.keys())}")
     logger.info(f"Application version: {config.get('app.version', 'unknown')}")
     
-    # Проверяем наличие необходимых директорий
-    for dir_path in REQUIRED_DIRS:
-        if not os.path.exists(dir_path):
-            logger.warning(f"Required directory not found: {dir_path}")
-    
     try:
-        # Запускаем сервер
         socketio.run(
             app,
             host='0.0.0.0',
