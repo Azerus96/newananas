@@ -1,35 +1,45 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="description" content="Open Face Chinese Poker - Play against AI">
     <meta name="theme-color" content="#007bff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     
     <title>Open Face Chinese Poker</title>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/favicon.png') }}">
     
     <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/menu.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/fantasy.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     
-    <!-- PWA -->
-    <link rel="manifest" href="/manifest.json">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
-    
-    <!-- Scripts -->
-    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Предзагрузка критических ресурсов -->
+    <link rel="preload" href="{{ url_for('static', filename='js/ui.js') }}" as="script">
+    <link rel="preload" href="{{ url_for('static', filename='js/game.js') }}" as="script">
 </head>
 <body class="{{ 'mobile' if preferences.is_mobile else '' }} {{ preferences.theme }}-theme">
+    <!-- Индикатор загрузки -->
+    <div id="loadingIndicator" class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+    </div>
+
     <!-- Главное меню -->
     <div class="main-menu" id="mainMenu">
         <div class="menu-header">
             <h1>Open Face Chinese Poker</h1>
             <div class="theme-toggle">
-                <button id="themeToggle">
+                <button id="themeToggle" aria-label="Toggle theme">
                     <i class="fas fa-moon"></i>
                 </button>
             </div>
@@ -39,16 +49,16 @@
             <!-- Выбор режима -->
             <div class="menu-section">
                 <h2>Game Mode</h2>
-                <div class="mode-selector">
-                    <button class="mode-btn" data-players="1">
+                <div class="mode-selector" role="radiogroup" aria-label="Select game mode">
+                    <button class="mode-btn" data-players="1" role="radio" aria-checked="false">
                         <i class="fas fa-user"></i>
                         <span>Single Player</span>
                     </button>
-                    <button class="mode-btn" data-players="2">
+                    <button class="mode-btn" data-players="2" role="radio" aria-checked="false">
                         <i class="fas fa-user-friends"></i>
                         <span>Two Players</span>
                     </button>
-                    <button class="mode-btn" data-players="3">
+                    <button class="mode-btn" data-players="3" role="radio" aria-checked="false">
                         <i class="fas fa-users"></i>
                         <span>Three Players</span>
                     </button>
@@ -60,32 +70,34 @@
                 <h2>Settings</h2>
                 <div class="settings-grid">
                     <div class="setting-item">
-                        <label>Fantasy Type:</label>
-                        <select id="fantasyType">
+                        <label for="fantasyType">Fantasy Type:</label>
+                        <select id="fantasyType" aria-label="Select fantasy type">
                             <option value="normal">Normal</option>
                             <option value="progressive">Progressive</option>
                             <option value="disabled">Disabled</option>
                         </select>
                     </div>
                     <div class="setting-item">
-                        <label>AI Think Time:</label>
+                        <label for="aiThinkTime">AI Think Time:</label>
                         <div class="slider-container">
-                            <input type="range" id="aiThinkTime" min="1" max="60" value="30">
-                            <span id="thinkTimeValue">30s</span>
+                            <input type="range" id="aiThinkTime" min="1" max="60" value="30"
+                                   aria-label="Set AI think time">
+                            <span id="thinkTimeValue" aria-live="polite">30s</span>
                         </div>
                     </div>
                     <div class="setting-item">
-                        <label>Animation Speed:</label>
-                        <select id="animationSpeed">
+                        <label for="animationSpeed">Animation Speed:</label>
+                        <select id="animationSpeed" aria-label="Select animation speed">
                             <option value="fast">Fast</option>
                             <option value="normal" selected>Normal</option>
                             <option value="slow">Slow</option>
                         </select>
                     </div>
                     <div class="setting-item">
-                        <label>Sound Effects:</label>
+                        <label for="soundToggle">Sound Effects:</label>
                         <label class="switch">
-                            <input type="checkbox" id="soundToggle" checked>
+                            <input type="checkbox" id="soundToggle" checked
+                                   aria-label="Toggle sound effects">
                             <span class="slider round"></span>
                         </label>
                     </div>
@@ -95,7 +107,7 @@
             <!-- Выбор AI -->
             <div class="menu-section">
                 <h2>AI Opponents</h2>
-                <div id="aiSelectors" class="ai-selector-grid">
+                <div id="aiSelectors" class="ai-selector-grid" aria-label="Select AI opponents">
                     <!-- Заполняется динамически -->
                 </div>
             </div>
@@ -104,25 +116,25 @@
             <div class="menu-section">
                 <h2>Statistics</h2>
                 <div class="stats-overview">
-                    <div class="stat-card">
+                    <div class="stat-card" role="status">
                         <span class="stat-label">Games Played</span>
                         <span class="stat-value" id="gamesPlayed">0</span>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" role="status">
                         <span class="stat-label">Win Rate</span>
                         <span class="stat-value" id="winRate">0%</span>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" role="status">
                         <span class="stat-label">Fantasy Rate</span>
                         <span class="stat-value" id="fantasyRate">0%</span>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card" role="status">
                         <span class="stat-label">Best Score</span>
                         <span class="stat-value" id="bestScore">0</span>
                     </div>
                 </div>
                 <div class="stats-charts">
-                    <canvas id="progressChart"></canvas>
+                    <canvas id="progressChart" aria-label="Progress chart"></canvas>
                 </div>
             </div>
 
@@ -148,44 +160,44 @@
                     <i class="fas fa-question-circle"></i>
                     Tutorial
                 </button>
-            </div>
+                </div>
         </div>
     </div>
 
     <!-- Игровое поле -->
-    <div class="game-container" id="gameContainer" style="display: none;">
+    <div class="game-container" id="gameContainer" style="display: none;" role="main">
         <!-- Верхняя панель -->
         <div class="top-panel">
-            <button id="menuButton" class="icon-btn">
+            <button id="menuButton" class="icon-btn" aria-label="Open menu">
                 <i class="fas fa-bars"></i>
             </button>
-            <div class="game-status">
+            <div class="game-status" role="status" aria-live="polite">
                 <span id="currentTurn">Your turn</span>
                 <span id="gameTimer">00:00</span>
             </div>
-            <button id="settingsButton" class="icon-btn">
+            <button id="settingsButton" class="icon-btn" aria-label="Open settings">
                 <i class="fas fa-cog"></i>
             </button>
         </div>
 
         <!-- Область вышедших карт -->
-        <div class="removed-cards-area">
+        <div class="removed-cards-area" role="region" aria-label="Removed cards">
             <div class="removed-cards-scroll">
                 <div id="removedCards" class="removed-cards-grid"></div>
             </div>
         </div>
 
         <!-- Игровые поля -->
-        <div class="players-container" id="playersContainer">
+        <div class="players-container" id="playersContainer" role="region" aria-label="Game boards">
             <!-- Заполняется динамически -->
         </div>
 
+        <!-- Область карт игрока -->
         <div class="player-hand-area">
             <!-- Режим тренировки -->
             <div id="trainingControls" class="training-controls" style="display: none;">
                 <div class="card-slots-grid">
-                    <!-- 17 слотов для карт -->
-                    <div id="cardSlots" class="card-slots"></div>
+                    <div id="cardSlots" class="card-slots" role="region" aria-label="Card slots"></div>
                 </div>
                 <div class="training-buttons">
                     <button id="distributeCards">Distribute Cards</button>
@@ -195,45 +207,45 @@
 
             <!-- Обычный режим -->
             <div id="normalHandArea" class="normal-hand">
-                <div id="playerHand" class="cards-row"></div>
+                <div id="playerHand" class="cards-row" role="region" aria-label="Your cards"></div>
             </div>
         </div>
 
         <!-- Боковая панель -->
-        <div class="side-panel" id="sidePanel">
+        <div class="side-panel" id="sidePanel" role="complementary">
             <div class="panel-section">
                 <h3>Current Game</h3>
                 <div class="game-stats">
                     <div class="stat-row">
                         <span>Score:</span>
-                        <span id="currentScore">0 - 0</span>
+                        <span id="currentScore" aria-live="polite">0 - 0</span>
                     </div>
                     <div class="stat-row">
                         <span>Royalties:</span>
-                        <span id="currentRoyalties">0</span>
+                        <span id="currentRoyalties" aria-live="polite">0</span>
                     </div>
                     <div class="stat-row">
                         <span>Fantasy Status:</span>
-                        <span id="fantasyStatus">Normal</span>
+                        <span id="fantasyStatus" aria-live="polite">Normal</span>
                     </div>
                 </div>
             </div>
 
             <div class="panel-section">
                 <h3>Move History</h3>
-                <div id="moveHistory" class="move-history"></div>
+                <div id="moveHistory" class="move-history" role="log" aria-label="Move history"></div>
             </div>
 
             <div class="panel-section">
                 <h3>Progress</h3>
-                <canvas id="gameProgressChart"></canvas>
+                <canvas id="gameProgressChart" aria-label="Game progress chart"></canvas>
             </div>
         </div>
     </div>
 
     <!-- Шаблоны -->
     <template id="playerBoardTemplate">
-        <div class="player-board">
+        <div class="player-board" role="region">
             <div class="player-info">
                 <span class="player-name"></span>
                 <span class="player-score"></span>
@@ -260,14 +272,11 @@
                     <div class="card-slot" data-position="12"></div>
                 </div>
             </div>
-            <div class="discarded-cards">
-                <!-- Сброшенные карты будут отображаться здесь -->
-            </div>
         </div>
     </template>
 
     <!-- Модальные окна -->
-    <div id="gameEndModal" class="modal" style="display: none;">
+    <div id="gameEndModal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Game Over">
         <div class="modal-content">
             <h2>Game Over</h2>
             <div id="gameResults"></div>
@@ -278,63 +287,34 @@
         </div>
     </div>
 
-    <div id="aiVsAiModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h2>AI vs AI Mode</h2>
-            <div class="ai-settings">
-                <div class="setting-group">
-                    <label>First AI:</label>
-                    <select id="firstAiSelect"></select>
-                </div>
-                <div class="setting-group">
-                    <label>Second AI:</label>
-                    <select id="secondAiSelect"></select>
-                </div>
-                <div class="setting-group">
-                    <label>Think Time:</label>
-                    <input type="range" id="aiVsAiThinkTime" min="1" max="60" value="30">
-                    <span id="aiVsAiThinkTimeValue">30s</span>
-                </div>
-            </div>
-            <div class="modal-buttons">
-                <button id="startAiVsAi" class="primary-btn">Start</button>
-                <button id="cancelAiVsAi" class="secondary-btn">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="settingsModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h2>Settings</h2>
-            <div class="settings-form">
-                <!-- Заполняется динамически -->
-            </div>
-            <div class="modal-buttons">
-                <button id="saveSettings" class="primary-btn">Save</button>
-                <button id="cancelSettings" class="secondary-btn">Cancel</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Скрипты -->
-    <script src="{{ url_for('static', filename='js/game.js') }}" type="module"></script>
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Основные скрипты приложения -->
     <script src="{{ url_for('static', filename='js/ui.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}" type="module"></script>
     <script src="{{ url_for('static', filename='js/statistics.js') }}" type="module"></script>
     <script src="{{ url_for('static', filename='js/training.js') }}" type="module"></script>
+    <script src="{{ url_for('static', filename='js/fantasy.js') }}" type="module"></script>
 
     <!-- Service Worker -->
     <script>
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js')
-                    .then(registration => {
-                        console.log('ServiceWorker registered');
-                    })
-                    .catch(error => {
-                        console.log('ServiceWorker registration failed:', error);
-                    });
+            window.addEventListener('load', async () => {
+                try {
+                    const registration = await navigator.serviceWorker.register('/service-worker.js');
+                    console.log('ServiceWorker registered successfully');
+                } catch (error) {
+                    console.error('ServiceWorker registration failed:', error);
+                }
             });
         }
     </script>
+
+    <!-- Оффлайн-индикатор -->
+    <div id="offlineIndicator" class="offline-indicator" role="alert" style="display: none;">
+        You are offline. Some features may be limited.
+    </div>
 </body>
 </html>
