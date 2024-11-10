@@ -1,12 +1,16 @@
+// web/static/js/ui.js
+
 class GameUI {
     constructor(game) {
         this.game = game;
         this.selectedCard = null;
         this.draggedCard = null;
         this.isMobile = window.innerWidth <= 768;
+        this.animationEnabled = true;
         this.initializeElements();
         this.setupDragAndDrop();
         this.setupResponsiveUI();
+        this.setupAnimationControl();
     }
 
     initializeElements() {
@@ -23,12 +27,37 @@ class GameUI {
             trainingControls: document.getElementById('trainingControls'),
             sidePanel: document.getElementById('sidePanel'),
             menuButton: document.getElementById('menuButton'),
-            mobileMenu: document.getElementById('mobileMenu')
+            mobileMenu: document.getElementById('mobileMenu'),
+            animationControl: document.getElementById('animationControl'),
+            foulsRate: document.getElementById('foulsRate'),
+            scoopsRate: document.getElementById('scoopsRate'),
+            fantasyStatus: document.getElementById('fantasyStatus')
         };
 
         // Инициализация мобильного меню
         if (this.isMobile) {
             this.initializeMobileMenu();
+        }
+
+        // Инициализация всплывающих подсказок
+        this.initializeTooltips();
+    }
+
+    setupAnimationControl() {
+        if (this.elements.animationControl) {
+            this.elements.animationControl.addEventListener('change', (e) => {
+                this.animationEnabled = e.target.value !== 'off';
+                document.body.classList.toggle('animations-disabled', !this.animationEnabled);
+                localStorage.setItem('animationPreference', e.target.value);
+            });
+
+            // Загрузка сохраненных настроек
+            const savedPreference = localStorage.getItem('animationPreference');
+            if (savedPreference) {
+                this.elements.animationControl.value = savedPreference;
+                this.animationEnabled = savedPreference !== 'off';
+                document.body.classList.toggle('animations-disabled', !this.animationEnabled);
+            }
         }
     }
 
@@ -36,14 +65,15 @@ class GameUI {
         const mobileMenuHTML = `
             <div id="mobileMenu" class="mobile-menu">
                 <div class="mobile-menu-header">
-                    <h3>Menu</h3>
+                    <h3>Меню</h3>
                     <button class="close-menu">×</button>
                 </div>
                 <div class="mobile-menu-content">
-                    <button class="menu-item" data-action="newGame">New Game</button>
-                    <button class="menu-item" data-action="statistics">Statistics</button>
-                    <button class="menu-item" data-action="settings">Settings</button>
-                    <button class="menu-item" data-action="returnToMenu">Return to Menu</button>
+                    <button class="menu-item" data-action="newGame">Новая игра</button>
+                    <button class="menu-item" data-action="statistics">Статистика</button>
+                    <button class="menu-item" data-action="settings">Настройки</button>
+                    <button class="menu-item" data-action="tutorial">Обучение</button>
+                    <button class="menu-item" data-action="returnToMenu">Вернуться в меню</button>
                 </div>
             </div>
         `;
@@ -61,6 +91,30 @@ class GameUI {
         });
     }
 
+    initializeTooltips() {
+        const tooltips = [
+            {
+                element: this.elements.foulsRate,
+                text: 'Процент ходов, нарушающих правило старшинства комбинаций'
+            },
+            {
+                element: this.elements.scoopsRate,
+                text: 'Процент ситуаций, когда игрок выигрывает все три ряда'
+            },
+            {
+                element: this.elements.fantasyStatus,
+                text: 'Текущий статус фантазии и бонусы'
+            }
+        ];
+
+        tooltips.forEach(({element, text}) => {
+            if (element) {
+                element.setAttribute('data-tooltip', text);
+                element.classList.add('has-tooltip');
+            }
+        });
+    }
+
     setupDragAndDrop() {
         if (this.isMobile) {
             this.setupTouchDragAndDrop();
@@ -74,7 +128,7 @@ class GameUI {
             if (e.target.classList.contains('card')) {
                 this.draggedCard = e.target;
                 e.target.classList.add('dragging');
-                e.dataTransfer.setData('text/plain', ''); // Для Firefox
+                e.dataTransfer.setData('text/plain', '');
             }
         });
 
@@ -107,7 +161,7 @@ class GameUI {
         });
     }
 
-setupTouchDragAndDrop() {
+    setupTouchDragAndDrop() {
         let touchCard = null;
         let initialX = 0;
         let initialY = 0;
@@ -130,7 +184,6 @@ setupTouchDragAndDrop() {
                 touchCard.style.left = `${touch.clientX - initialX}px`;
                 touchCard.style.top = `${touch.clientY - initialY}px`;
                 
-                // Проверяем слоты под пальцем
                 const slot = this.getTouchTargetSlot(touch.clientX, touch.clientY);
                 if (slot && this.isValidDropTarget(slot)) {
                     slot.classList.add('droppable');
@@ -150,175 +203,240 @@ setupTouchDragAndDrop() {
                 }
                 
                 touchCard.classList.remove('dragging');
-                touchCard = null;
-            }
+            touchCard = null;
+            
+            // Очищаем подсветку всех слотов
+            document.querySelectorAll('.card-slot').forEach(slot => {
+                slot.classList.remove('droppable');
+            });
+        }
+    });
+}
+
+getTouchTargetSlot(x, y) {
+    const elements = document.elementsFromPoint(x, y);
+    return elements.find(el => el.classList.contains('card-slot'));
+}
+
+resetCardPosition(card) {
+    card.style.position = '';
+    card.style.left = '';
+    card.style.top = '';
+}
+
+isValidDropTarget(slot) {
+    if (!this.draggedCard || slot.classList.contains('occupied')) {
+        return false;
+    }
+
+    const card = this.getCardData(this.draggedCard);
+    const position = parseInt(slot.dataset.position);
+    
+    return this.game.isValidMove(card, position);
+}
+
+handleCardDrop(card, slot) {
+    const cardData = this.getCardData(card);
+    const position = parseInt(slot.dataset.position);
+
+    if (this.animationEnabled) {
+        this.animateCardPlacement(card, slot, () => {
+            this.game.makeMove(cardData, position);
         });
+    } else {
+        this.game.makeMove(cardData, position);
     }
+}
 
-    getTouchTargetSlot(x, y) {
-        const elements = document.elementsFromPoint(x, y);
-        return elements.find(el => el.classList.contains('card-slot'));
-    }
+animateCardPlacement(card, slot, callback) {
+    const cardRect = card.getBoundingClientRect();
+    const slotRect = slot.getBoundingClientRect();
+    
+    const deltaX = slotRect.left - cardRect.left;
+    const deltaY = slotRect.top - cardRect.top;
 
-    resetCardPosition(card) {
-        card.style.position = '';
-        card.style.left = '';
-        card.style.top = '';
-    }
+    card.style.transition = 'transform 0.3s ease-out';
+    card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
 
-    switchToGame() {
-        this.elements.mainMenu.style.display = 'none';
-        this.elements.gameContainer.style.display = 'grid';
-        this.initializeGameBoard();
-        
-        if (this.isMobile) {
-            this.setupMobileLayout();
-        }
-    }
+    card.addEventListener('transitionend', () => {
+        card.style.transition = '';
+        card.style.transform = '';
+        callback();
+    }, { once: true });
+}
 
-    setupMobileLayout() {
-        document.body.classList.add('mobile');
-        this.elements.sidePanel.classList.add('mobile-panel');
-        this.updateMobileOrientation();
-        
-        // Слушаем изменение ориентации
-        window.addEventListener('orientationchange', () => {
-            this.updateMobileOrientation();
-        });
-    }
+updateGameState(state) {
+    // Обновляем статус игры
+    this.elements.gameStatus.textContent = 
+        state.currentPlayer === 0 ? 'Ваш ход' : `Ход ${this.getPlayerName(state.currentPlayer)}`;
 
-    updateMobileOrientation() {
-        const isLandscape = window.innerWidth > window.innerHeight;
-        document.body.classList.toggle('landscape', isLandscape);
-        this.adjustBoardLayout(isLandscape);
-    }
-
-    adjustBoardLayout(isLandscape) {
-        const container = this.elements.playersContainer;
-        const playerCount = this.game.state.players;
-
-        if (isLandscape) {
-            container.classList.add('landscape-layout');
-            // Горизонтальное расположение
-            if (playerCount === 2) {
-                container.style.gridTemplateAreas = '"opponent player"';
-            } else if (playerCount === 3) {
-                container.style.gridTemplateAreas = '"opponent1 opponent2 player"';
-            }
-        } else {
-            container.classList.remove('landscape-layout');
-            // Вертикальное расположение
-            if (playerCount === 2) {
-                container.style.gridTemplateAreas = '"opponent" "player"';
-            } else if (playerCount === 3) {
-                container.style.gridTemplateAreas = '"opponent1" "opponent2" "player"';
-            }
-        }
-    }
-
-    initializeGameBoard() {
-        this.elements.playersContainer.innerHTML = '';
-        const template = document.getElementById('playerBoardTemplate');
-        const playerCount = this.game.state.players;
-
-        for (let i = 0; i < playerCount; i++) {
-            const board = template.content.cloneNode(true);
-            const boardElement = board.querySelector('.player-board');
-            boardElement.dataset.player = i;
-
-            // Настраиваем информацию об игроке
-            const playerInfo = boardElement.querySelector('.player-info');
-            const playerName = i === 0 ? 'You' : this.getAgentName(i);
-            playerInfo.querySelector('.player-name').textContent = playerName;
-
-            this.elements.playersContainer.appendChild(board);
-        }
-
-        this.setupBoardLayout();
-    }
-
-    getAgentName(playerIndex) {
-        const agent = this.game.state.agents[playerIndex - 1];
-        return agent ? agent.name.replace('Agent', '') : `AI ${playerIndex}`;
-    }
-
-setupBoardLayout() {
-        const container = this.elements.playersContainer;
-        const playerCount = this.game.state.players;
-        container.className = `players-container players-${playerCount}`;
-
-        if (this.isMobile) {
-            this.adjustBoardLayout(window.innerWidth > window.innerHeight);
-        } else {
-            // Десктопное расположение
-            if (playerCount === 1) {
-                container.style.gridTemplateAreas = '"player"';
-            } else if (playerCount === 2) {
-                container.style.gridTemplateAreas = '"opponent" "player"';
-            } else {
-                container.style.gridTemplateAreas = '"opponent1 opponent2" "player player"';
-            }
-        }
-    }
-
-    updateGameState(state) {
-        // Обновляем статус игры
-        this.elements.gameStatus.textContent = 
-            state.currentPlayer === 0 ? 'Your turn' : `${this.getAgentName(state.currentPlayer)}'s turn`;
-
-        // Обновляем таймер
-        if (state.currentPlayer === 0) {
-            this.startTimer();
-        } else {
-            this.stopTimer();
-        }
-
-        // Обновляем карты в руке
-        this.updatePlayerHand(state.playerCards);
-
-        // Обновляем доски всех игроков
-        this.updateBoards(state);
-
-        // Обновляем вышедшие карты
-        this.updateRemovedCards(state.removedCards);
-
-        // Обновляем историю ходов
-        if (state.lastMove) {
-            this.addMoveToHistory(state.lastMove);
-        }
-
-        // Обновляем статус фантазии
-        this.updateFantasyStatus(state.fantasyStatus);
-
-        // Обновляем боковую панель
-        this.updateSidePanel(state);
-    }
-
-    startTimer() {
+    // Обновляем таймер
+    if (state.currentPlayer === 0) {
+        this.startTimer();
+    } else {
         this.stopTimer();
-        let seconds = 0;
-        this.timer = setInterval(() => {
-            seconds++;
-            this.elements.gameTimer.textContent = this.formatTime(seconds);
-        }, 1000);
     }
 
-    stopTimer() {
-        if (this.timer) {
-            clearInterval(this.timer);
-            this.timer = null;
+    // Обновляем карты в руке
+    this.updatePlayerHand(state.playerCards);
+
+    // Обновляем доски всех игроков
+    this.updateBoards(state);
+
+    // Обновляем вышедшие карты
+    this.updateRemovedCards(state.removedCards);
+
+    // Обновляем историю ходов
+    if (state.lastMove) {
+        this.addMoveToHistory(state.lastMove);
+    }
+
+    // Обновляем статус фантазии
+    this.updateFantasyStatus(state.fantasyStatus);
+
+    // Обновляем статистику
+    this.updateStatistics(state);
+
+    // Обновляем боковую панель
+    this.updateSidePanel(state);
+}
+
+updateStatistics(state) {
+    // Обновляем показатели фолов и скупов
+    if (this.elements.foulsRate) {
+        this.elements.foulsRate.textContent = 
+            `${((state.fouls / state.totalMoves) * 100).toFixed(1)}%`;
+    }
+    if (this.elements.scoopsRate) {
+        this.elements.scoopsRate.textContent = 
+            `${((state.scoops / state.totalMoves) * 100).toFixed(1)}%`;
+    }
+}
+
+updateFantasyStatus(status) {
+    if (this.elements.fantasyStatus) {
+        const statusText = status.active ? 
+            `Фантазия активна (${status.cardsCount} карт)` : 
+            'Фантазия неактивна';
+        
+        this.elements.fantasyStatus.textContent = statusText;
+        this.elements.fantasyStatus.classList.toggle('active', status.active);
+
+        if (status.progressiveBonus) {
+            this.elements.fantasyStatus.setAttribute(
+                'data-bonus',
+                `Прогрессивный бонус: ${status.progressiveBonus}`
+            );
         }
     }
+}
 
-    formatTime(seconds) {
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
-        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+showAIThinking(player, thinkTime = 30) {
+    const overlay = document.createElement('div');
+    overlay.className = 'thinking-overlay';
+    
+    const content = `
+        <div class="thinking-content">
+            <div class="spinner"></div>
+            <p>${this.getPlayerName(player)} думает...</p>
+            ${this.animationEnabled ? `
+                <div class="progress-bar">
+                    <div class="progress" style="animation-duration: ${thinkTime}s"></div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+    
+    overlay.innerHTML = content;
+    document.body.appendChild(overlay);
+}
+
+hideAIThinking() {
+    const overlay = document.querySelector('.thinking-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 300);
+    }
+}
+
+showGameOver(result) {
+    const modal = document.createElement('div');
+    modal.className = 'game-over-modal';
+    
+    const content = `
+        <div class="game-over-content">
+            <h2>Игра окончена</h2>
+            <div class="game-results">
+                <h3>${result.winner === 0 ? 'Вы победили!' : `${this.getPlayerName(result.winner)} победил!`}</h3>
+                <div class="results-details">
+                    <p>Ваш счёт: ${result.playerScore}</p>
+                    ${result.aiScores.map((score, i) => 
+                        `<p>${this.getPlayerName(i + 1)} счёт: ${score}</p>`
+                    ).join('')}
+                    <p>Роялти: ${result.royalties}</p>
+                    <p>Фолы: ${((result.fouls / result.totalMoves) * 100).toFixed(1)}%</p>
+                    <p>Скупы: ${((result.scoops / result.totalMoves) * 100).toFixed(1)}%</p>
+                    ${result.fantasyAchieved ? '<p class="fantasy-achieved">Фантазия достигнута!</p>' : ''}
+                </div>
+            </div>
+            <div class="game-over-buttons">
+                <button class="new-game">Новая игра</button>
+                <button class="return-menu">Вернуться в меню</button>
+            </div>
+        </div>
+    `;
+    
+    modal.innerHTML = content;
+
+    modal.querySelector('.new-game').addEventListener('click', () => {
+        modal.remove();
+        this.game.startGame();
+    });
+
+    modal.querySelector('.return-menu').addEventListener('click', () => {
+        modal.remove();
+        this.game.returnToMenu();
+    });
+
+    document.body.appendChild(modal);
+}
+
+showError(message) {
+    const toast = document.createElement('div');
+    toast.className = 'error-toast';
+    toast.textContent = message;
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+return player === 0 ? 'Вы' : 
+            this.game.state.agents[player - 1]?.name.replace('Agent', 'AI ') || `Игрок ${player}`;
     }
 
     toggleMobileMenu() {
         const menu = document.getElementById('mobileMenu');
         menu.classList.toggle('active');
+        
+        // Добавляем затемнение фона
+        if (menu.classList.contains('active')) {
+            const overlay = document.createElement('div');
+            overlay.className = 'mobile-menu-overlay';
+            overlay.addEventListener('click', () => this.closeMobileMenu());
+            document.body.appendChild(overlay);
+        } else {
+            document.querySelector('.mobile-menu-overlay')?.remove();
+        }
+    }
+
+    closeMobileMenu() {
+        const menu = document.getElementById('mobileMenu');
+        menu.classList.remove('active');
+        document.querySelector('.mobile-menu-overlay')?.remove();
     }
 
     handleMobileMenuAction(action) {
@@ -332,15 +450,110 @@ setupBoardLayout() {
             case 'settings':
                 this.showSettingsModal();
                 break;
+            case 'tutorial':
+                this.game.showTutorial();
+                break;
             case 'returnToMenu':
                 this.game.showConfirmDialog(
-                    "Return to Menu",
-                    "Are you sure you want to return to the main menu?",
+                    "Вернуться в меню",
+                    "Вы уверены, что хотите вернуться в главное меню?",
                     () => this.game.returnToMenu()
                 );
                 break;
         }
         this.closeMobileMenu();
+    }
+
+    showSettingsModal() {
+        const modal = document.createElement('div');
+        modal.className = 'settings-modal';
+        modal.innerHTML = `
+            <div class="settings-content">
+                <h2>Настройки</h2>
+                <div class="settings-group">
+                    <label>Анимация:</label>
+                    <select id="animationSetting">
+                        <option value="normal">Нормальная</option>
+                        <option value="fast">Быстрая</option>
+                        <option value="off">Выключена</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <label>Звуковые эффекты:</label>
+                    <label class="switch">
+                        <input type="checkbox" id="soundSetting">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <div class="settings-group">
+                    <label>Тема:</label>
+                    <select id="themeSetting">
+                        <option value="light">Светлая</option>
+                        <option value="dark">Тёмная</option>
+                        <option value="auto">Системная</option>
+                    </select>
+                </div>
+                <div class="settings-buttons">
+                    <button class="save-settings">Сохранить</button>
+                    <button class="cancel-settings">Отмена</button>
+                </div>
+            </div>
+        `;
+
+        // Загружаем текущие настройки
+        const currentSettings = this.loadSettings();
+        modal.querySelector('#animationSetting').value = currentSettings.animation;
+        modal.querySelector('#soundSetting').checked = currentSettings.sound;
+        modal.querySelector('#themeSetting').value = currentSettings.theme;
+
+        // Добавляем обработчики
+        modal.querySelector('.save-settings').addEventListener('click', () => {
+            const newSettings = {
+                animation: modal.querySelector('#animationSetting').value,
+                sound: modal.querySelector('#soundSetting').checked,
+                theme: modal.querySelector('#themeSetting').value
+            };
+            this.saveSettings(newSettings);
+            modal.remove();
+        });
+
+        modal.querySelector('.cancel-settings').addEventListener('click', () => {
+            modal.remove();
+        });
+
+        document.body.appendChild(modal);
+    }
+
+    loadSettings() {
+        const defaultSettings = {
+            animation: 'normal',
+            sound: true,
+            theme: 'light'
+        };
+        
+        try {
+            return JSON.parse(localStorage.getItem('gameSettings')) || defaultSettings;
+        } catch {
+            return defaultSettings;
+        }
+    }
+
+    saveSettings(settings) {
+        localStorage.setItem('gameSettings', JSON.stringify(settings));
+        this.applySettings(settings);
+    }
+
+    applySettings(settings) {
+        // Применяем анимацию
+        this.animationEnabled = settings.animation !== 'off';
+        document.body.classList.toggle('animations-disabled', !this.animationEnabled);
+
+        // Применяем звук
+        document.body.classList.toggle('sound-enabled', settings.sound);
+
+        // Применяем тему
+        document.body.className = document.body.className.replace(/theme-\w+/, '');
+        document.body.classList.add(`theme-${settings.theme}`);
     }
 
     showConfirmDialog({ title, message, onConfirm, onCancel }) {
@@ -351,94 +564,83 @@ setupBoardLayout() {
                 <h3>${title}</h3>
                 <p>${message}</p>
                 <div class="confirm-dialog-buttons">
-                    <button class="confirm-yes">Yes</button>
-                    <button class="confirm-no">No</button>
+                    <button class="confirm-yes">Да</button>
+                    <button class="confirm-no">Нет</button>
                 </div>
             </div>
         `;
 
-        dialog.querySelector('.confirm-yes').addEventListener('click', onConfirm);
-        dialog.querySelector('.confirm-no').addEventListener('click', onCancel || this.hideConfirmDialog);
+        dialog.querySelector('.confirm-yes').addEventListener('click', () => {
+            onConfirm();
+            dialog.remove();
+        });
+
+        dialog.querySelector('.confirm-no').addEventListener('click', () => {
+            if (onCancel) onCancel();
+            dialog.remove();
+        });
 
         document.body.appendChild(dialog);
     }
 
-    hideConfirmDialog() {
-        const dialog = document.querySelector('.confirm-dialog');
-        if (dialog) {
-            dialog.remove();
+    setupResponsiveUI() {
+        window.addEventListener('resize', () => {
+            this.isMobile = window.innerWidth <= 768;
+            this.updateLayout();
+        });
+
+        // Начальная настройка layout
+        this.updateLayout();
+    }
+
+    updateLayout() {
+        if (this.isMobile) {
+            document.body.classList.add('mobile');
+            this.setupMobileLayout();
+        } else {
+            document.body.classList.remove('mobile');
+            this.setupDesktopLayout();
         }
     }
 
-    showError(message) {
-        const toast = document.createElement('div');
-        toast.className = 'error-toast';
-        toast.textContent = message;
+    setupMobileLayout() {
+        // Настройка мобильного интерфейса
+        this.elements.sidePanel?.classList.add('mobile-panel');
         
-        document.body.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.classList.add('fade-out');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
-
-    showAIThinking(player) {
-        const overlay = document.createElement('div');
-        overlay.className = 'thinking-overlay';
-        overlay.innerHTML = `
-            <div class="thinking-content">
-                <div class="spinner"></div>
-                <p>${this.getAgentName(player)} thinking...</p>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-    }
-
-    hideAIThinking() {
-        const overlay = document.querySelector('.thinking-overlay');
-        if (overlay) {
-            overlay.remove();
+        // Обработка ориентации
+        if (window.innerWidth > window.innerHeight) {
+            document.body.classList.add('landscape');
+            this.adjustLayoutForLandscape();
+        } else {
+            document.body.classList.remove('landscape');
+            this.adjustLayoutForPortrait();
         }
     }
 
-    showGameOver(result) {
-        const modal = document.createElement('div');
-        modal.className = 'game-over-modal';
-        modal.innerHTML = `
-            <div class="game-over-content">
-                <h2>Game Over</h2>
-                <div class="game-results">
-                    <h3>${result.winner === 0 ? 'You Won!' : `${this.getAgentName(result.winner)} Won!`}</h3>
-                    <div class="results-details">
-                        <p>Your Score: ${result.playerScore}</p>
-                        ${result.aiScores.map((score, i) => 
-                            `<p>${this.getAgentName(i + 1)} Score: ${score}</p>`
-                        ).join('')}
-                        <p>Royalties: ${result.royalties}</p>
-                        ${result.fantasyAchieved ? '<p class="fantasy-achieved">Fantasy Achieved!</p>' : ''}
-                    </div>
-                </div>
-                <div class="game-over-buttons">
-                    <button class="new-game">New Game</button>
-                    <button class="return-menu">Return to Menu</button>
-                </div>
-            </div>
-        `;
+    setupDesktopLayout() {
+        // Настройка десктопного интерфейса
+        this.elements.sidePanel?.classList.remove('mobile-panel');
+        this.resetLayout();
+    }
 
-        modal.querySelector('.new-game').addEventListener('click', () => {
-            modal.remove();
-            this.game.startGame();
-        });
+    adjustLayoutForLandscape() {
+        if (this.elements.playersContainer) {
+            this.elements.playersContainer.style.gridTemplateColumns = 'repeat(auto-fit, minmax(250px, 1fr))';
+        }
+    }
 
-        modal.querySelector('.return-menu').addEventListener('click', () => {
-            modal.remove();
-            this.game.returnToMenu();
-        });
+    adjustLayoutForPortrait() {
+        if (this.elements.playersContainer) {
+            this.elements.playersContainer.style.gridTemplateColumns = '1fr';
+        }
+    }
 
-        document.body.appendChild(modal);
+    resetLayout() {
+        if (this.elements.playersContainer) {
+            this.elements.playersContainer.style.gridTemplateColumns = '';
+        }
     }
 }
 
-// Экспорт класса
+// Экспортируем класс
 export default GameUI;
