@@ -5,12 +5,34 @@ class GameUI {
         this.game = game;
         this.selectedCard = null;
         this.draggedCard = null;
-        this.isMobile = window.innerWidth <= 768;
+        this.isMobile = 'ontouchstart' in window || window.innerWidth <= 768;
         this.animationEnabled = true;
-        this.initializeElements();
-        this.setupDragAndDrop();
-        this.setupResponsiveUI();
-        this.setupAnimationControl();
+        this.touchStartX = null;
+        this.touchStartY = null;
+        
+        // Инициализация после загрузки DOM
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.init());
+        } else {
+            this.init();
+        }
+    }
+
+    init() {
+        try {
+            this.initializeElements();
+            this.setupEventListeners();
+            this.loadSettings();
+            this.setupResponsiveUI();
+            this.setupDragAndDrop();
+            
+            if (this.isMobile) {
+                this.initializeMobileUI();
+            }
+        } catch (error) {
+            console.error('UI initialization failed:', error);
+            this.showError('Failed to initialize game interface');
+        }
     }
 
     initializeElements() {
@@ -27,94 +49,199 @@ class GameUI {
             trainingControls: document.getElementById('trainingControls'),
             sidePanel: document.getElementById('sidePanel'),
             menuButton: document.getElementById('menuButton'),
-            mobileMenu: document.getElementById('mobileMenu'),
-            animationControl: document.getElementById('animationControl'),
-            foulsRate: document.getElementById('foulsRate'),
-            scoopsRate: document.getElementById('scoopsRate'),
-            fantasyStatus: document.getElementById('fantasyStatus')
+            themeToggle: document.getElementById('themeToggle'),
+            startGame: document.getElementById('startGame'),
+            aiThinkTime: document.getElementById('aiThinkTime'),
+            fantasyType: document.getElementById('fantasyType'),
+            soundToggle: document.getElementById('soundToggle'),
+            animationControl: document.getElementById('animationControl')
         };
 
-        // Инициализация мобильного меню
-        if (this.isMobile) {
-            this.initializeMobileMenu();
+        // Проверка обязательных элементов
+        const requiredElements = ['mainMenu', 'gameContainer', 'playersContainer'];
+        const missingElements = requiredElements.filter(id => !this.elements[id]);
+        
+        if (missingElements.length > 0) {
+            throw new Error(`Missing required elements: ${missingElements.join(', ')}`);
         }
-
-        // Инициализация всплывающих подсказок
-        this.initializeTooltips();
     }
 
-    setupAnimationControl() {
-        if (this.elements.animationControl) {
-            this.elements.animationControl.addEventListener('change', (e) => {
-                this.animationEnabled = e.target.value !== 'off';
-                document.body.classList.toggle('animations-disabled', !this.animationEnabled);
-                localStorage.setItem('animationPreference', e.target.value);
-            });
-
-            // Загрузка сохраненных настроек
-            const savedPreference = localStorage.getItem('animationPreference');
-            if (savedPreference) {
-                this.elements.animationControl.value = savedPreference;
-                this.animationEnabled = savedPreference !== 'off';
-                document.body.classList.toggle('animations-disabled', !this.animationEnabled);
+    setupEventListeners() {
+        // Основные элементы управления
+        this.elements.menuButton?.addEventListener('click', () => this.toggleMenu());
+        this.elements.themeToggle?.addEventListener('click', () => this.toggleTheme());
+        this.elements.startGame?.addEventListener('click', () => this.game.startGame());
+        
+        // Настройки
+        this.elements.aiThinkTime?.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            if (!isNaN(value)) {
+                this.game.setAIThinkTime(value);
+                document.getElementById('thinkTimeValue').textContent = `${value}s`;
             }
-        }
+        });
+
+        this.elements.fantasyType?.addEventListener('change', (e) => {
+            this.game.setFantasyMode(e.target.value);
+        });
+
+        this.elements.soundToggle?.addEventListener('change', (e) => {
+            this.toggleSound(e.target.checked);
+        });
+
+        this.elements.animationControl?.addEventListener('change', (e) => {
+            this.setAnimationState(e.target.value);
+        });
+
+        // Обработка изменения размера окна
+        window.addEventListener('resize', this.debounce(() => {
+            this.updateResponsiveLayout();
+        }, 250));
+
+        // Обработка клавиатуры
+        document.addEventListener('keydown', (e) => this.handleKeyboardInput(e));
     }
 
-    initializeMobileMenu() {
-        const mobileMenuHTML = `
+            // Утилиты
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // Настройка мобильного интерфейса
+    initializeMobileUI() {
+        this.setupTouchEvents();
+        this.createMobileMenu();
+        this.adjustLayoutForMobile();
+    }
+
+    setupTouchEvents() {
+        document.addEventListener('touchstart', (e) => {
+            this.touchStartX = e.touches[0].clientX;
+            this.touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!this.touchStartX || !this.touchStartY) return;
+
+            const xDiff = this.touchStartX - e.touches[0].clientX;
+            const yDiff = this.touchStartY - e.touches[0].clientY;
+
+            if (Math.abs(xDiff) > Math.abs(yDiff)) {
+                if (xDiff > 50) { // Свайп влево
+                    this.openSidePanel();
+                } else if (xDiff < -50) { // Свайп вправо
+                    this.closeSidePanel();
+                }
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchend', () => {
+            this.touchStartX = null;
+            this.touchStartY = null;
+        }, { passive: true });
+    }
+
+    createMobileMenu() {
+        if (document.getElementById('mobileMenu')) return;
+
+        const menuHTML = `
             <div id="mobileMenu" class="mobile-menu">
                 <div class="mobile-menu-header">
                     <h3>Меню</h3>
-                    <button class="close-menu">×</button>
+                    <button class="close-menu" aria-label="Закрыть меню">×</button>
                 </div>
                 <div class="mobile-menu-content">
-                    <button class="menu-item" data-action="newGame">Новая игра</button>
-                    <button class="menu-item" data-action="statistics">Статистика</button>
-                    <button class="menu-item" data-action="settings">Настройки</button>
-                    <button class="menu-item" data-action="tutorial">Обучение</button>
-                    <button class="menu-item" data-action="returnToMenu">Вернуться в меню</button>
+                    <button class="menu-item" data-action="newGame">
+                        <i class="fas fa-play"></i> Новая игра
+                    </button>
+                    <button class="menu-item" data-action="statistics">
+                        <i class="fas fa-chart-bar"></i> Статистика
+                    </button>
+                    <button class="menu-item" data-action="settings">
+                        <i class="fas fa-cog"></i> Настройки
+                    </button>
+                    <button class="menu-item" data-action="tutorial">
+                        <i class="fas fa-question-circle"></i> Обучение
+                    </button>
+                    <button class="menu-item" data-action="returnToMenu">
+                        <i class="fas fa-home"></i> В главное меню
+                    </button>
                 </div>
             </div>
         `;
-        document.body.insertAdjacentHTML('beforeend', mobileMenuHTML);
 
-        // Обработчики для мобильного меню
-        document.querySelector('.close-menu').addEventListener('click', () => {
+        document.body.insertAdjacentHTML('beforeend', menuHTML);
+        this.setupMobileMenuListeners();
+    }
+
+    setupMobileMenuListeners() {
+        const menu = document.getElementById('mobileMenu');
+        if (!menu) return;
+
+        menu.querySelector('.close-menu').addEventListener('click', () => {
             this.closeMobileMenu();
         });
 
-        document.querySelectorAll('.menu-item').forEach(item => {
+        menu.querySelectorAll('.menu-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                this.handleMobileMenuAction(e.target.dataset.action);
+                const action = e.target.closest('.menu-item').dataset.action;
+                this.handleMobileMenuAction(action);
             });
         });
     }
 
-    initializeTooltips() {
-        const tooltips = [
-            {
-                element: this.elements.foulsRate,
-                text: 'Процент ходов, нарушающих правило старшинства комбинаций'
-            },
-            {
-                element: this.elements.scoopsRate,
-                text: 'Процент ситуаций, когда игрок выигрывает все три ряда'
-            },
-            {
-                element: this.elements.fantasyStatus,
-                text: 'Текущий статус фантазии и бонусы'
-            }
-        ];
-
-        tooltips.forEach(({element, text}) => {
-            if (element) {
-                element.setAttribute('data-tooltip', text);
-                element.classList.add('has-tooltip');
-            }
-        });
+    handleMobileMenuAction(action) {
+        this.closeMobileMenu();
+        
+        switch(action) {
+            case 'newGame':
+                this.game.startGame();
+                break;
+            case 'statistics':
+                this.showStatistics();
+                break;
+            case 'settings':
+                this.showSettings();
+                break;
+            case 'tutorial':
+                this.showTutorial();
+                break;
+            case 'returnToMenu':
+                this.confirmReturnToMenu();
+                break;
+        }
     }
 
+    adjustLayoutForMobile() {
+        const isLandscape = window.innerWidth > window.innerHeight;
+        document.body.classList.toggle('landscape', isLandscape);
+        
+        if (this.elements.playersContainer) {
+            this.elements.playersContainer.style.gridTemplateColumns = 
+                isLandscape ? 'repeat(auto-fit, minmax(250px, 1fr))' : '1fr';
+        }
+
+        this.adjustCardSizes(isLandscape);
+        this.updateControlsLayout(isLandscape);
+    }
+
+    adjustCardSizes(isLandscape) {
+        const cardWidth = isLandscape ? '50px' : '60px';
+        const cardHeight = isLandscape ? '70px' : '84px';
+        
+        document.documentElement.style.setProperty('--card-width', cardWidth);
+        document.documentElement.style.setProperty('--card-height', cardHeight);
+    }
+
+// Управление интерфейсом
     setupDragAndDrop() {
         if (this.isMobile) {
             this.setupTouchDragAndDrop();
@@ -125,26 +252,32 @@ class GameUI {
 
     setupMouseDragAndDrop() {
         document.addEventListener('dragstart', (e) => {
-            if (e.target.classList.contains('card')) {
-                this.draggedCard = e.target;
-                e.target.classList.add('dragging');
-                e.dataTransfer.setData('text/plain', '');
-            }
+            if (!e.target.classList.contains('card')) return;
+            
+            this.draggedCard = e.target;
+            e.target.classList.add('dragging');
+            e.dataTransfer.setData('text/plain', '');
+            this.highlightValidDropZones(this.draggedCard);
         });
 
         document.addEventListener('dragend', (e) => {
-            if (e.target.classList.contains('card')) {
-                e.target.classList.remove('dragging');
-                this.draggedCard = null;
-            }
+            if (!e.target.classList.contains('card')) return;
+            
+            e.target.classList.remove('dragging');
+            this.clearHighlightedDropZones();
+            this.draggedCard = null;
         });
 
+        this.setupDropZones();
+    }
+
+    setupDropZones() {
         document.querySelectorAll('.card-slot').forEach(slot => {
             slot.addEventListener('dragover', (e) => {
+                if (!this.isValidDropTarget(slot)) return;
+                
                 e.preventDefault();
-                if (this.isValidDropTarget(slot)) {
-                    slot.classList.add('droppable');
-                }
+                slot.classList.add('droppable');
             });
 
             slot.addEventListener('dragleave', (e) => {
@@ -154,6 +287,7 @@ class GameUI {
             slot.addEventListener('drop', (e) => {
                 e.preventDefault();
                 slot.classList.remove('droppable');
+                
                 if (this.draggedCard && this.isValidDropTarget(slot)) {
                     this.handleCardDrop(this.draggedCard, slot);
                 }
@@ -165,160 +299,302 @@ class GameUI {
         let touchCard = null;
         let initialX = 0;
         let initialY = 0;
+        let moved = false;
 
         document.addEventListener('touchstart', (e) => {
-            if (e.target.classList.contains('card')) {
-                touchCard = e.target;
-                const touch = e.touches[0];
-                initialX = touch.clientX - touchCard.offsetLeft;
-                initialY = touch.clientY - touchCard.offsetTop;
-                touchCard.classList.add('dragging');
-            }
+            if (!e.target.classList.contains('card')) return;
+            
+            touchCard = e.target;
+            moved = false;
+            const touch = e.touches[0];
+            initialX = touch.clientX - touchCard.offsetLeft;
+            initialY = touch.clientY - touchCard.offsetTop;
+            touchCard.classList.add('dragging');
         }, { passive: false });
 
         document.addEventListener('touchmove', (e) => {
-            if (touchCard) {
-                e.preventDefault();
-                const touch = e.touches[0];
-                touchCard.style.position = 'fixed';
-                touchCard.style.left = `${touch.clientX - initialX}px`;
-                touchCard.style.top = `${touch.clientY - initialY}px`;
-                
-                const slot = this.getTouchTargetSlot(touch.clientX, touch.clientY);
-                if (slot && this.isValidDropTarget(slot)) {
-                    slot.classList.add('droppable');
-                }
-            }
+            if (!touchCard) return;
+            
+            e.preventDefault();
+            moved = true;
+            const touch = e.touches[0];
+            
+            touchCard.style.position = 'fixed';
+            touchCard.style.left = `${touch.clientX - initialX}px`;
+            touchCard.style.top = `${touch.clientY - initialY}px`;
+            
+            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
+            this.updateDropZoneHighlight(dropTarget);
         }, { passive: false });
 
         document.addEventListener('touchend', (e) => {
-            if (touchCard) {
-                const touch = e.changedTouches[0];
-                const slot = this.getTouchTargetSlot(touch.clientX, touch.clientY);
-                
-                if (slot && this.isValidDropTarget(slot)) {
-                    this.handleCardDrop(touchCard, slot);
-                } else {
-                    this.resetCardPosition(touchCard);
-                }
-                
-                touchCard.classList.remove('dragging');
-            touchCard = null;
+            if (!touchCard) return;
             
-            // Очищаем подсветку всех слотов
-            document.querySelectorAll('.card-slot').forEach(slot => {
-                slot.classList.remove('droppable');
-            });
-        }
-    });
-}
-
-getTouchTargetSlot(x, y) {
-    const elements = document.elementsFromPoint(x, y);
-    return elements.find(el => el.classList.contains('card-slot'));
-}
-
-resetCardPosition(card) {
-    card.style.position = '';
-    card.style.left = '';
-    card.style.top = '';
-}
-
-isValidDropTarget(slot) {
-    if (!this.draggedCard || slot.classList.contains('occupied')) {
-        return false;
-    }
-
-    const card = this.getCardData(this.draggedCard);
-    const position = parseInt(slot.dataset.position);
-    
-    return this.game.isValidMove(card, position);
-}
-
-handleCardDrop(card, slot) {
-    const cardData = this.getCardData(card);
-    const position = parseInt(slot.dataset.position);
-
-    if (this.animationEnabled) {
-        this.animateCardPlacement(card, slot, () => {
-            this.game.makeMove(cardData, position);
+            const touch = e.changedTouches[0];
+            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
+            
+            if (!moved) {
+                this.handleCardTap(touchCard);
+            } else if (dropTarget && this.isValidDropTarget(dropTarget)) {
+                this.handleCardDrop(touchCard, dropTarget);
+            } else {
+                this.resetCardPosition(touchCard);
+            }
+            
+            touchCard.classList.remove('dragging');
+            this.clearHighlightedDropZones();
+            touchCard = null;
         });
-    } else {
-        this.game.makeMove(cardData, position);
-    }
-}
-
-animateCardPlacement(card, slot, callback) {
-    const cardRect = card.getBoundingClientRect();
-    const slotRect = slot.getBoundingClientRect();
-    
-    const deltaX = slotRect.left - cardRect.left;
-    const deltaY = slotRect.top - cardRect.top;
-
-    card.style.transition = 'transform 0.3s ease-out';
-    card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-
-    card.addEventListener('transitionend', () => {
-        card.style.transition = '';
-        card.style.transform = '';
-        callback();
-    }, { once: true });
-}
-
-updateGameState(state) {
-    // Обновляем статус игры
-    this.elements.gameStatus.textContent = 
-        state.currentPlayer === 0 ? 'Ваш ход' : `Ход ${this.getPlayerName(state.currentPlayer)}`;
-
-    // Обновляем таймер
-    if (state.currentPlayer === 0) {
-        this.startTimer();
-    } else {
-        this.stopTimer();
     }
 
-    // Обновляем карты в руке
-    this.updatePlayerHand(state.playerCards);
-
-    // Обновляем доски всех игроков
-    this.updateBoards(state);
-
-    // Обновляем вышедшие карты
-    this.updateRemovedCards(state.removedCards);
-
-    // Обновляем историю ходов
-    if (state.lastMove) {
-        this.addMoveToHistory(state.lastMove);
+    findDropTargetAtPoint(x, y) {
+        const elements = document.elementsFromPoint(x, y);
+        return elements.find(el => el.classList.contains('card-slot'));
     }
 
-    // Обновляем статус фантазии
-    this.updateFantasyStatus(state.fantasyStatus);
-
-    // Обновляем статистику
-    this.updateStatistics(state);
-
-    // Обновляем боковую панель
-    this.updateSidePanel(state);
-}
-
-updateStatistics(state) {
-    // Обновляем показатели фолов и скупов
-    if (this.elements.foulsRate) {
-        this.elements.foulsRate.textContent = 
-            `${((state.fouls / state.totalMoves) * 100).toFixed(1)}%`;
+    updateDropZoneHighlight(target) {
+        this.clearHighlightedDropZones();
+        if (target && this.isValidDropTarget(target)) {
+            target.classList.add('droppable');
+        }
     }
-    if (this.elements.scoopsRate) {
-        this.elements.scoopsRate.textContent = 
-            `${((state.scoops / state.totalMoves) * 100).toFixed(1)}%`;
-    }
-}
 
-updateFantasyStatus(status) {
-    if (this.elements.fantasyStatus) {
+    handleCardTap(card) {
+        if (this.selectedCard === card) {
+            this.deselectCard();
+        } else {
+            this.selectCard(card);
+        }
+    }
+
+    selectCard(card) {
+        if (this.selectedCard) {
+            this.selectedCard.classList.remove('selected');
+        }
+        this.selectedCard = card;
+        card.classList.add('selected');
+        this.highlightValidDropZones(card);
+    }
+
+    deselectCard() {
+        if (this.selectedCard) {
+            this.selectedCard.classList.remove('selected');
+            this.selectedCard = null;
+            this.clearHighlightedDropZones();
+        }
+    }
+
+    highlightValidDropZones(card) {
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            if (this.isValidDropTarget(slot)) {
+                slot.classList.add('valid-target');
+            }
+        });
+    }
+
+    clearHighlightedDropZones() {
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            slot.classList.remove('droppable', 'valid-target');
+        });
+    }
+
+// Управление состоянием игры и UI
+    handleCardDrop(card, slot) {
+        if (!this.isValidDropTarget(slot)) return;
+
+        const cardData = this.getCardData(card);
+        const position = parseInt(slot.dataset.position);
+
+        if (this.animationEnabled) {
+            this.animateCardPlacement(card, slot, () => {
+                this.game.makeMove(cardData, position);
+            });
+        } else {
+            this.game.makeMove(cardData, position);
+        }
+    }
+
+    animateCardPlacement(card, slot, callback) {
+        if (!this.animationEnabled) {
+            callback();
+            return;
+        }
+
+        const cardRect = card.getBoundingClientRect();
+        const slotRect = slot.getBoundingClientRect();
+        const deltaX = slotRect.left - cardRect.left;
+        const deltaY = slotRect.top - cardRect.top;
+
+        card.style.transition = 'transform 0.3s ease-out';
+        card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+        const handleTransitionEnd = () => {
+            card.style.transition = '';
+            card.style.transform = '';
+            card.removeEventListener('transitionend', handleTransitionEnd);
+            callback();
+        };
+
+        card.addEventListener('transitionend', handleTransitionEnd, { once: true });
+    }
+
+    updateGameState(state) {
+        try {
+            this.updateGameStatus(state);
+            this.updatePlayerHand(state.playerCards);
+            this.updateBoards(state);
+            this.updateRemovedCards(state.removedCards);
+            this.updateMoveHistory(state.lastMove);
+            this.updateFantasyStatus(state.fantasyStatus);
+            this.updateStatistics(state);
+            this.updateSidePanel(state);
+        } catch (error) {
+            console.error('Failed to update game state:', error);
+            this.showError('Failed to update game state');
+        }
+    }
+
+    updateGameStatus(state) {
+        if (!this.elements.gameStatus) return;
+
+        const statusText = state.currentPlayer === 0 
+            ? 'Ваш ход' 
+            : `Ход ${this.getPlayerName(state.currentPlayer)}`;
+        
+        this.elements.gameStatus.textContent = statusText;
+
+        if (state.currentPlayer === 0) {
+            this.startTimer();
+        } else {
+            this.stopTimer();
+        }
+    }
+
+    updatePlayerHand(cards) {
+        if (!this.elements.playerHand) return;
+
+        this.elements.playerHand.innerHTML = '';
+        cards.forEach(card => {
+            const cardElement = this.createCardElement(card);
+            this.elements.playerHand.appendChild(cardElement);
+        });
+    }
+
+    updateBoards(state) {
+        if (!this.elements.playersContainer) return;
+
+        // Очищаем контейнер
+        this.elements.playersContainer.innerHTML = '';
+        
+        // Создаем доски для каждого игрока
+        state.players.forEach((player, index) => {
+            const board = this.createPlayerBoard(player, index);
+            this.elements.playersContainer.appendChild(board);
+        });
+
+        // Обновляем layout
+        this.elements.playersContainer.setAttribute('data-players', state.players.length);
+    }
+
+    createPlayerBoard(player, index) {
+        const template = document.getElementById('playerBoardTemplate');
+        if (!template) {
+            console.error('Player board template not found');
+            return document.createElement('div');
+        }
+
+        const board = template.content.cloneNode(true).firstElementChild;
+        
+        // Заполняем информацию об игроке
+        board.querySelector('.player-name').textContent = this.getPlayerName(index);
+        board.querySelector('.player-score').textContent = player.score;
+        
+        // Заполняем карты на доске
+        this.fillPlayerBoard(board, player.cards);
+        
+        return board;
+    }
+
+    fillPlayerBoard(board, cards) {
+        cards.forEach((card, position) => {
+            if (!card) return;
+            
+            const slot = board.querySelector(`[data-position="${position}"]`);
+            if (!slot) return;
+
+            const cardElement = this.createCardElement(card);
+            slot.appendChild(cardElement);
+            slot.classList.add('occupied');
+        });
+    }
+
+    createCardElement(card) {
+        const element = document.createElement('div');
+        element.className = `card ${card.color}`;
+        element.draggable = true;
+        element.dataset.rank = card.rank;
+        element.dataset.suit = card.suit;
+
+        element.innerHTML = `
+            <span class="card-rank">${card.rank}</span>
+            <span class="card-suit">${this.getSuitSymbol(card.suit)}</span>
+        `;
+
+        return element;
+    }
+
+    getSuitSymbol(suit) {
+        const symbols = {
+            'h': '♥',
+            'd': '♦',
+            'c': '♣',
+            's': '♠'
+        };
+        return symbols[suit] || suit;
+    }
+
+// Обновление UI элементов и обработка взаимодействий
+    updateRemovedCards(cards) {
+        if (!this.elements.removedCards) return;
+
+        this.elements.removedCards.innerHTML = '';
+        cards.forEach(card => {
+            const cardElement = this.createCardElement(card);
+            cardElement.draggable = false; // Убираем возможность перетаскивания
+            this.elements.removedCards.appendChild(cardElement);
+        });
+    }
+
+    updateMoveHistory(move) {
+        if (!this.elements.moveHistory || !move) return;
+
+        const moveElement = document.createElement('div');
+        moveElement.className = 'move-item';
+        moveElement.innerHTML = `
+            <span class="move-player">${this.getPlayerName(move.player)}</span>
+            <span class="move-card">${move.card.rank}${this.getSuitSymbol(move.card.suit)}</span>
+            <span class="move-position">Position: ${move.position}</span>
+        `;
+
+        this.elements.moveHistory.insertBefore(moveElement, this.elements.moveHistory.firstChild);
+        this.trimMoveHistory();
+    }
+
+    trimMoveHistory(maxMoves = 10) {
+        if (!this.elements.moveHistory) return;
+
+        while (this.elements.moveHistory.children.length > maxMoves) {
+            this.elements.moveHistory.removeChild(this.elements.moveHistory.lastChild);
+        }
+    }
+
+    updateFantasyStatus(status) {
+        if (!this.elements.fantasyStatus) return;
+
         const statusText = status.active ? 
             `Фантазия активна (${status.cardsCount} карт)` : 
             'Фантазия неактивна';
-        
+
         this.elements.fantasyStatus.textContent = statusText;
         this.elements.fantasyStatus.classList.toggle('active', status.active);
 
@@ -329,316 +605,259 @@ updateFantasyStatus(status) {
             );
         }
     }
-}
 
-showAIThinking(player, thinkTime = 30) {
-    const overlay = document.createElement('div');
-    overlay.className = 'thinking-overlay';
-    
-    const content = `
-        <div class="thinking-content">
-            <div class="spinner"></div>
-            <p>${this.getPlayerName(player)} думает...</p>
-            ${this.animationEnabled ? `
-                <div class="progress-bar">
-                    <div class="progress" style="animation-duration: ${thinkTime}s"></div>
-                </div>
-            ` : ''}
-        </div>
-    `;
-    
-    overlay.innerHTML = content;
-    document.body.appendChild(overlay);
-}
+    updateStatistics(state) {
+        const stats = {
+            foulsRate: state.fouls / state.totalMoves * 100 || 0,
+            scoopsRate: state.scoops / state.totalMoves * 100 || 0,
+            winRate: state.wins / state.gamesPlayed * 100 || 0
+        };
 
-hideAIThinking() {
-    const overlay = document.querySelector('.thinking-overlay');
-    if (overlay) {
+        Object.entries(stats).forEach(([key, value]) => {
+            const element = document.getElementById(key);
+            if (element) {
+                element.textContent = `${value.toFixed(1)}%`;
+                this.animateStatUpdate(element);
+            }
+        });
+    }
+
+    animateStatUpdate(element) {
+        element.classList.add('updated');
+        setTimeout(() => element.classList.remove('updated'), 300);
+    }
+
+    showAIThinking(player, thinkTime = 30) {
+        const overlay = document.createElement('div');
+        overlay.className = 'thinking-overlay';
+        
+        overlay.innerHTML = `
+            <div class="thinking-content">
+                <div class="spinner"></div>
+                <p>${this.getPlayerName(player)} думает...</p>
+                ${this.animationEnabled ? `
+                    <div class="progress-bar">
+                        <div class="progress" style="animation-duration: ${thinkTime}s"></div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        document.body.appendChild(overlay);
+    }
+
+    hideAIThinking() {
+        const overlay = document.querySelector('.thinking-overlay');
+        if (!overlay) return;
+
         overlay.classList.add('fade-out');
         setTimeout(() => overlay.remove(), 300);
     }
-}
 
-showGameOver(result) {
-    const modal = document.createElement('div');
-    modal.className = 'game-over-modal';
-    
-    const content = `
-        <div class="game-over-content">
-            <h2>Игра окончена</h2>
-            <div class="game-results">
-                <h3>${result.winner === 0 ? 'Вы победили!' : `${this.getPlayerName(result.winner)} победил!`}</h3>
-                <div class="results-details">
-                    <p>Ваш счёт: ${result.playerScore}</p>
-                    ${result.aiScores.map((score, i) => 
-                        `<p>${this.getPlayerName(i + 1)} счёт: ${score}</p>`
-                    ).join('')}
-                    <p>Роялти: ${result.royalties}</p>
-                    <p>Фолы: ${((result.fouls / result.totalMoves) * 100).toFixed(1)}%</p>
-                    <p>Скупы: ${((result.scoops / result.totalMoves) * 100).toFixed(1)}%</p>
-                    ${result.fantasyAchieved ? '<p class="fantasy-achieved">Фантазия достигнута!</p>' : ''}
-                </div>
-            </div>
-            <div class="game-over-buttons">
-                <button class="new-game">Новая игра</button>
-                <button class="return-menu">Вернуться в меню</button>
-            </div>
-        </div>
-    `;
-    
-    modal.innerHTML = content;
-
-    modal.querySelector('.new-game').addEventListener('click', () => {
-        modal.remove();
-        this.game.startGame();
-    });
-
-    modal.querySelector('.return-menu').addEventListener('click', () => {
-        modal.remove();
-        this.game.returnToMenu();
-    });
-
-    document.body.appendChild(modal);
-}
-
-showError(message) {
-    const toast = document.createElement('div');
-    toast.className = 'error-toast';
-    toast.textContent = message;
-    
-    document.body.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.classList.add('fade-out');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-return player === 0 ? 'Вы' : 
-            this.game.state.agents[player - 1]?.name.replace('Agent', 'AI ') || `Игрок ${player}`;
-    }
-
-    toggleMobileMenu() {
-        const menu = document.getElementById('mobileMenu');
-        menu.classList.toggle('active');
-        
-        // Добавляем затемнение фона
-        if (menu.classList.contains('active')) {
-            const overlay = document.createElement('div');
-            overlay.className = 'mobile-menu-overlay';
-            overlay.addEventListener('click', () => this.closeMobileMenu());
-            document.body.appendChild(overlay);
-        } else {
-            document.querySelector('.mobile-menu-overlay')?.remove();
-        }
-    }
-
-    closeMobileMenu() {
-        const menu = document.getElementById('mobileMenu');
-        menu.classList.remove('active');
-        document.querySelector('.mobile-menu-overlay')?.remove();
-    }
-
-    handleMobileMenuAction(action) {
-        switch(action) {
-            case 'newGame':
-                this.game.startGame();
-                break;
-            case 'statistics':
-                this.game.showFullStatistics();
-                break;
-            case 'settings':
-                this.showSettingsModal();
-                break;
-            case 'tutorial':
-                this.game.showTutorial();
-                break;
-            case 'returnToMenu':
-                this.game.showConfirmDialog(
-                    "Вернуться в меню",
-                    "Вы уверены, что хотите вернуться в главное меню?",
-                    () => this.game.returnToMenu()
-                );
-                break;
-        }
-        this.closeMobileMenu();
-    }
-
-    showSettingsModal() {
+    showGameOver(result) {
         const modal = document.createElement('div');
-        modal.className = 'settings-modal';
+        modal.className = 'game-over-modal';
+        
         modal.innerHTML = `
-            <div class="settings-content">
-                <h2>Настройки</h2>
-                <div class="settings-group">
-                    <label>Анимация:</label>
-                    <select id="animationSetting">
-                        <option value="normal">Нормальная</option>
-                        <option value="fast">Быстрая</option>
-                        <option value="off">Выключена</option>
-                    </select>
+            <div class="game-over-content">
+                <h2>Игра окончена</h2>
+                <div class="game-results">
+                    <h3>${result.winner === 0 ? 'Вы победили!' : `${this.getPlayerName(result.winner)} победил!`}</h3>
+                    <div class="results-details">
+                        <p>Ваш счёт: ${result.playerScore}</p>
+                        ${result.aiScores.map((score, i) => 
+                            `<p>${this.getPlayerName(i + 1)} счёт: ${score}</p>`
+                        ).join('')}
+                        <p>Роялти: ${result.royalties}</p>
+                        <p>Фолы: ${((result.fouls / result.totalMoves) * 100).toFixed(1)}%</p>
+                        <p>Скупы: ${((result.scoops / result.totalMoves) * 100).toFixed(1)}%</p>
+                        ${result.fantasyAchieved ? '<p class="fantasy-achieved">Фантазия достигнута!</p>' : ''}
+                    </div>
                 </div>
-                <div class="settings-group">
-                    <label>Звуковые эффекты:</label>
-                    <label class="switch">
-                        <input type="checkbox" id="soundSetting">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
-                <div class="settings-group">
-                    <label>Тема:</label>
-                    <select id="themeSetting">
-                        <option value="light">Светлая</option>
-                        <option value="dark">Тёмная</option>
-                        <option value="auto">Системная</option>
-                    </select>
-                </div>
-                <div class="settings-buttons">
-                    <button class="save-settings">Сохранить</button>
-                    <button class="cancel-settings">Отмена</button>
+                <div class="game-over-buttons">
+                    <button class="new-game">Новая игра</button>
+                    <button class="return-menu">Вернуться в меню</button>
                 </div>
             </div>
         `;
 
-        // Загружаем текущие настройки
-        const currentSettings = this.loadSettings();
-        modal.querySelector('#animationSetting').value = currentSettings.animation;
-        modal.querySelector('#soundSetting').checked = currentSettings.sound;
-        modal.querySelector('#themeSetting').value = currentSettings.theme;
-
-        // Добавляем обработчики
-        modal.querySelector('.save-settings').addEventListener('click', () => {
-            const newSettings = {
-                animation: modal.querySelector('#animationSetting').value,
-                sound: modal.querySelector('#soundSetting').checked,
-                theme: modal.querySelector('#themeSetting').value
-            };
-            this.saveSettings(newSettings);
-            modal.remove();
-        });
-
-        modal.querySelector('.cancel-settings').addEventListener('click', () => {
-            modal.remove();
-        });
-
+        this.setupGameOverListeners(modal);
         document.body.appendChild(modal);
     }
 
-    loadSettings() {
-        const defaultSettings = {
-            animation: 'normal',
-            sound: true,
-            theme: 'light'
-        };
+// Вспомогательные методы и обработчики
+    setupGameOverListeners(modal) {
+        modal.querySelector('.new-game').addEventListener('click', () => {
+            modal.remove();
+            this.game.startGame();
+        });
+
+        modal.querySelector('.return-menu').addEventListener('click', () => {
+            modal.remove();
+            this.game.returnToMenu();
+        });
+    }
+
+    showError(message, duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = 'error-toast';
+        toast.textContent = message;
         
-        try {
-            return JSON.parse(localStorage.getItem('gameSettings')) || defaultSettings;
-        } catch {
-            return defaultSettings;
+        document.body.appendChild(toast);
+        
+        // Анимация появления
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+        });
+        
+        setTimeout(() => {
+            toast.classList.add('fade-out');
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+
+    showMessage(message, type = 'info', duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('show'));
+        
+        setTimeout(() => {
+            toast.classList.add('fade-out');
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+
+    toggleTheme() {
+        const currentTheme = document.body.getAttribute('data-theme') || 'light';
+        const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+        
+        document.body.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        
+        // Обновляем иконку
+        const themeIcon = this.elements.themeToggle?.querySelector('i');
+        if (themeIcon) {
+            themeIcon.className = `fas fa-${newTheme === 'light' ? 'sun' : 'moon'}`;
         }
     }
 
-    saveSettings(settings) {
-        localStorage.setItem('gameSettings', JSON.stringify(settings));
-        this.applySettings(settings);
+    toggleSound(enabled) {
+        document.body.classList.toggle('sound-enabled', enabled);
+        localStorage.setItem('soundEnabled', enabled);
     }
 
-    applySettings(settings) {
-        // Применяем анимацию
-        this.animationEnabled = settings.animation !== 'off';
+    setAnimationState(value) {
+        this.animationEnabled = value !== 'off';
         document.body.classList.toggle('animations-disabled', !this.animationEnabled);
-
-        // Применяем звук
-        document.body.classList.toggle('sound-enabled', settings.sound);
-
-        // Применяем тему
-        document.body.className = document.body.className.replace(/theme-\w+/, '');
-        document.body.classList.add(`theme-${settings.theme}`);
+        localStorage.setItem('animationState', value);
     }
 
-    showConfirmDialog({ title, message, onConfirm, onCancel }) {
-        const dialog = document.createElement('div');
-        dialog.className = 'confirm-dialog';
-        dialog.innerHTML = `
-            <div class="confirm-dialog-content">
-                <h3>${title}</h3>
-                <p>${message}</p>
-                <div class="confirm-dialog-buttons">
-                    <button class="confirm-yes">Да</button>
-                    <button class="confirm-no">Нет</button>
-                </div>
-            </div>
-        `;
+    loadSettings() {
+        // Загрузка темы
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.body.setAttribute('data-theme', savedTheme);
 
-        dialog.querySelector('.confirm-yes').addEventListener('click', () => {
-            onConfirm();
-            dialog.remove();
-        });
+        // Загрузка настроек звука
+        const soundEnabled = localStorage.getItem('soundEnabled') !== 'false';
+        this.toggleSound(soundEnabled);
 
-        dialog.querySelector('.confirm-no').addEventListener('click', () => {
-            if (onCancel) onCancel();
-            dialog.remove();
-        });
+        // Загрузка настроек анимации
+        const animationState = localStorage.getItem('animationState') || 'normal';
+        this.setAnimationState(animationState);
 
-        document.body.appendChild(dialog);
-    }
-
-    setupResponsiveUI() {
-        window.addEventListener('resize', () => {
-            this.isMobile = window.innerWidth <= 768;
-            this.updateLayout();
-        });
-
-        // Начальная настройка layout
-        this.updateLayout();
-    }
-
-    updateLayout() {
-        if (this.isMobile) {
-            document.body.classList.add('mobile');
-            this.setupMobileLayout();
-        } else {
-            document.body.classList.remove('mobile');
-            this.setupDesktopLayout();
+        // Применяем настройки к элементам управления
+        if (this.elements.animationControl) {
+            this.elements.animationControl.value = animationState;
+        }
+        if (this.elements.soundToggle) {
+            this.elements.soundToggle.checked = soundEnabled;
         }
     }
 
-    setupMobileLayout() {
-        // Настройка мобильного интерфейса
-        this.elements.sidePanel?.classList.add('mobile-panel');
+    handleKeyboardInput(e) {
+        // Отменяем обработку, если открыто модальное окно
+        if (document.querySelector('.modal.active')) return;
+
+        if (e.ctrlKey || e.metaKey) {
+            switch(e.key.toLowerCase()) {
+                case 'z':
+                    e.preventDefault();
+                    this.game.undoLastMove();
+                    break;
+                case 's':
+                    e.preventDefault();
+                    this.game.saveGame();
+                    break;
+                case 'f':
+                    e.preventDefault();
+                    this.toggleFullscreen();
+                    break;
+            }
+        } else if (e.key === 'Escape') {
+            this.handleEscapeKey();
+        }
+    }
+
+    handleEscapeKey() {
+        // Закрываем модальные окна в порядке приоритета
+        const modalElements = [
+            '.game-over-modal',
+            '.settings-modal',
+            '.mobile-menu.active',
+            '.side-panel.active'
+        ];
+
+        for (const selector of modalElements) {
+            const element = document.querySelector(selector);
+            if (element) {
+                if (selector.includes('mobile-menu')) {
+                    this.closeMobileMenu();
+                } else if (selector.includes('side-panel')) {
+                    this.closeSidePanel();
+                } else {
+                    element.remove();
+                }
+                return;
+            }
+        }
+    }
+
+    toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                this.showError('Error attempting to enable fullscreen');
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+
+    getPlayerName(player) {
+        return player === 0 ? 'Вы' : 
+            this.game.state.agents[player - 1]?.name.replace('Agent', 'AI ') || 
+            `Игрок ${player}`;
+    }
+
+    isValidDropTarget(slot) {
+        if (!slot || !this.draggedCard || slot.classList.contains('occupied')) {
+            return false;
+        }
+
+        const card = this.getCardData(this.draggedCard);
+        const position = parseInt(slot.dataset.position);
         
-        // Обработка ориентации
-        if (window.innerWidth > window.innerHeight) {
-            document.body.classList.add('landscape');
-            this.adjustLayoutForLandscape();
-        } else {
-            document.body.classList.remove('landscape');
-            this.adjustLayoutForPortrait();
-        }
+        return this.game.isValidMove(card, position);
     }
 
-    setupDesktopLayout() {
-        // Настройка десктопного интерфейса
-        this.elements.sidePanel?.classList.remove('mobile-panel');
-        this.resetLayout();
-    }
-
-    adjustLayoutForLandscape() {
-        if (this.elements.playersContainer) {
-            this.elements.playersContainer.style.gridTemplateColumns = 'repeat(auto-fit, minmax(250px, 1fr))';
-        }
-    }
-
-    adjustLayoutForPortrait() {
-        if (this.elements.playersContainer) {
-            this.elements.playersContainer.style.gridTemplateColumns = '1fr';
-        }
-    }
-
-    resetLayout() {
-        if (this.elements.playersContainer) {
-            this.elements.playersContainer.style.gridTemplateColumns = '';
-        }
+    getCardData(cardElement) {
+        return {
+            rank: cardElement.dataset.rank,
+            suit: cardElement.dataset.suit,
+            color: cardElement.classList.contains('red') ? 'red' : 'black'
+        };
     }
 }
 
