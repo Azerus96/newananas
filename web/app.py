@@ -738,7 +738,7 @@ def make_move(game):
         
         return jsonify({'error': 'Invalid move'}), 400
 
-async def process_ai_moves(game):
+        async def process_ai_moves(game):
     """Обрабатывает ходы AI последовательно"""
     while not game.is_game_over() and game.current_player != 1:
         success = await process_ai_move(game)
