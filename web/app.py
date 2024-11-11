@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 import sys
 import os
 from pathlib import Path
@@ -6,12 +9,14 @@ from datetime import datetime
 from prometheus_client import Counter, Histogram
 from logging.config import dictConfig
 from flask import Flask, render_template, jsonify, request, g, session, redirect, url_for, make_response, send_from_directory
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 from typing import Optional, Dict, Any, List
 import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+import json
+from time import time
 
 # Настройка TensorFlow
 tf.get_logger().setLevel('ERROR')
@@ -57,6 +62,9 @@ dictConfig({
     'formatters': {
         'default': {
             'format': log_config.get('format')
+        },
+        'detailed': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
         }
     },
     'handlers': {
@@ -70,7 +78,7 @@ dictConfig({
             'filename': os.path.join(config.get('paths.logs'), log_config.get('file')),
             'maxBytes': 1024 * 1024,
             'backupCount': 10,
-            'formatter': 'default'
+            'formatter': 'detailed'
         }
     },
     'root': {
@@ -86,7 +94,9 @@ REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method', 'end
 RESPONSE_TIME = Histogram('http_response_time_seconds', 'HTTP response time')
 GAME_METRICS = Counter('game_metrics_total', 'Game related metrics', ['type'])
 WEBSOCKET_CONNECTIONS = Counter('websocket_connections_total', 'WebSocket connections')
+WEBSOCKET_ERRORS = Counter('websocket_errors_total', 'WebSocket errors', ['type'])
 AI_METRICS = Counter('ai_metrics_total', 'AI related metrics', ['agent', 'action'])
+CONNECTION_LATENCY = Histogram('connection_latency_seconds', 'Connection latency')
 
 # Доступные агенты
 AVAILABLE_AGENTS = {
@@ -102,28 +112,49 @@ app = Flask(__name__,
     template_folder=config.get('web.template_folder')
 )
 
+# Расширенная конфигурация приложения
 app.config.update(
     JSON_SORT_KEYS=False,
     PROPAGATE_EXCEPTIONS=True,
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
     DEBUG=config.get('web.debug', False),
     SECRET_KEY=config.get('security.secret_key', os.urandom(24)),
-    PERMANENT_SESSION_LIFETIME=config.get('web.session_lifetime', 3600)
+    PERMANENT_SESSION_LIFETIME=config.get('web.session_lifetime', 3600),
+    SOCKETIO_PING_TIMEOUT=60,
+    SOCKETIO_PING_INTERVAL=25,
+    SOCKETIO_ASYNC_MODE='gevent',
+    SOCKETIO_LOGGER=True,
+    SOCKETIO_ENGINEIO_LOGGER=True
 )
 
-# Инициализация SocketIO с поддержкой асинхронности
+# Инициализация SocketIO с расширенными настройками
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*",
     async_mode='gevent',
     ping_timeout=60,
-    ping_interval=25
+    ping_interval=25,
+    logger=True,
+    engineio_logger=True,
+    async_handlers=True,
+    reconnection=True,
+    reconnection_attempts=5,
+    reconnection_delay=1000,
+    reconnection_delay_max=5000
 )
 
 # Инициализация глобальных объектов
 app_state = AppState()
 analytics_manager = AnalyticsManager()
 executor = ThreadPoolExecutor(max_workers=4)
+
+# Состояние подключений
+connections = {
+    'active': 0,
+    'total': 0,
+    'errors': 0,
+    'last_error': None
+}
 
 # Вспомогательные функции для работы с агентами
 def create_agent(agent_type: str, position: int, think_time: int) -> BaseAgent:
@@ -153,12 +184,17 @@ def init_session():
     if 'user_id' not in session:
         session['user_id'] = str(uuid.uuid4())
         session.permanent = True
+        logger.info(f"New session created: {session['user_id']}")
+    
     if 'preferences' not in session:
         session['preferences'] = {
             'theme': 'light',
             'animation_speed': 'normal',
             'sound_enabled': True
         }
+    
+    if 'connection_time' not in session:
+        session['connection_time'] = time()
 
 # Декораторы
 def require_game(f):
@@ -167,10 +203,12 @@ def require_game(f):
     def decorated_function(*args, **kwargs):
         game_id = session.get('current_game_id')
         if not game_id:
+            logger.warning(f"No active game for user {session.get('user_id')}")
             return jsonify({'error': 'No active game'}), 400
             
         game = app_state.get_game(game_id)
         if not game:
+            logger.warning(f"Game {game_id} not found")
             return jsonify({'error': 'Game not found'}), 404
             
         return f(*args, game=game, **kwargs)
@@ -184,7 +222,22 @@ def handle_errors(f):
             return f(*args, **kwargs)
         except Exception as e:
             logger.error(f"Error in {f.__name__}: {e}", exc_info=True)
-            return jsonify({'error': str(e)}), 500
+            error_id = str(uuid.uuid4())
+            analytics_manager.track_error(error_id, e)
+            return jsonify({
+                'error': str(e),
+                'error_id': error_id
+            }), 500
+    return decorated_function
+
+def require_websocket(f):
+    """Декоратор для проверки WebSocket соединения"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not request.environ.get('wsgi.websocket'):
+            logger.warning("WebSocket connection required")
+            return jsonify({'error': 'WebSocket connection required'}), 400
+        return f(*args, **kwargs)
     return decorated_function
 
 # Вспомогательные функции
@@ -192,9 +245,23 @@ def emit_game_update(game: Game, event_type: str = 'game_state'):
     """Отправляет обновление состояния игры через WebSocket"""
     room = session.get('user_id')
     if room:
-        state = game.get_state()
-        state['event_type'] = event_type
-        socketio.emit('game_update', state, room=room)
+        try:
+            state = game.get_state()
+            state['event_type'] = event_type
+            state['timestamp'] = datetime.now().isoformat()
+            state['connection_status'] = {
+                'latency': socketio.server.manager.get_latency(room),
+                'connected': True
+            }
+            socketio.emit('game_update', state, room=room)
+            logger.debug(f"Game update emitted: {event_type}")
+        except Exception as e:
+            logger.error(f"Error emitting game update: {e}", exc_info=True)
+            socketio.emit('error', {
+                'message': 'Failed to update game state',
+                'error': str(e)
+            }, room=room)
+            WEBSOCKET_ERRORS.labels(type='emit_error').inc()
 
 def save_game_progress(game: Game):
     """Сохраняет прогресс игры"""
@@ -202,6 +269,7 @@ def save_game_progress(game: Game):
         state = game.save_state()
         session['saved_game_state'] = state
         analytics_manager.track_game_save(game)
+        logger.info(f"Game progress saved for game {game.id}")
         return True
     except Exception as e:
         logger.error(f"Error saving game progress: {e}", exc_info=True)
@@ -218,6 +286,7 @@ def load_game_progress():
         game = app_state.create_game(game_id, saved_state['config'])
         game.load_state(saved_state)
         session['current_game_id'] = game_id
+        logger.info(f"Game progress loaded: {game_id}")
         
         return game
     except Exception as e:
@@ -229,12 +298,16 @@ async def process_ai_move(game: Game):
     try:
         # Показываем, что AI думает
         emit_game_update(game, 'ai_thinking')
+        start_time = time()
         
         # Получаем ход AI в отдельном потоке
         ai_move = await asyncio.get_event_loop().run_in_executor(
             executor,
             game.get_ai_move
         )
+        
+        think_time = time() - start_time
+        logger.debug(f"AI think time: {think_time:.2f}s")
         
         # Применяем ход
         success = game.make_move(game.current_player, *ai_move)
@@ -250,11 +323,19 @@ async def process_ai_move(game: Game):
             if ai_move.is_scoop:
                 game.state.scoops += 1
             game.state.totalMoves += 1
+            
+            # Обновляем статистику AI
+            analytics_manager.track_ai_move(
+                game.current_agent,
+                ai_move,
+                think_time
+            )
         else:
             AI_METRICS.labels(
                 agent=get_agent_display_name(game.current_agent),
                 action='move_failed'
             ).inc()
+            logger.warning(f"AI move failed for agent {game.current_agent.name}")
             
         # Отправляем обновление
         emit_game_update(game)
@@ -262,6 +343,7 @@ async def process_ai_move(game: Game):
         return success
     except Exception as e:
         logger.error(f"Error processing AI move: {e}", exc_info=True)
+        WEBSOCKET_ERRORS.labels(type='ai_move_error').inc()
         return False
 
 def check_game_over(game: Game):
@@ -271,10 +353,15 @@ def check_game_over(game: Game):
             result = game.get_result()
             room = session.get('user_id')
             if room:
-                socketio.emit('game_over', result, room=room)
+                socketio.emit('game_over', {
+                    'result': result,
+                    'timestamp': datetime.now().isoformat(),
+                    'statistics': game.get_statistics()
+                }, room=room)
             
             # Сохраняем статистику
             analytics_manager.track_game_end(game, result)
+            logger.info(f"Game {game.id} finished. Winner: {result.winner}")
             
             # Очищаем состояние
             app_state.remove_game(session.get('current_game_id'))
@@ -284,6 +371,7 @@ def check_game_over(game: Game):
             return True
         except Exception as e:
             logger.error(f"Error handling game over: {e}", exc_info=True)
+            WEBSOCKET_ERRORS.labels(type='game_over_error').inc()
     
     return False
 
@@ -297,8 +385,30 @@ def get_client_preferences():
         'is_mobile': is_mobile(),
         'theme': session.get('preferences', {}).get('theme', 'light'),
         'animation_speed': session.get('preferences', {}).get('animation_speed', 'normal'),
-        'sound_enabled': session.get('preferences', {}).get('sound_enabled', True)
+        'sound_enabled': session.get('preferences', {}).get('sound_enabled', True),
+        'connection_time': session.get('connection_time'),
+        'websocket_connected': bool(request.environ.get('wsgi.websocket'))
     }
+
+def check_connection_health():
+    """Проверяет здоровье соединения"""
+    try:
+        room = session.get('user_id')
+        if room:
+            latency = socketio.server.manager.get_latency(room)
+            connected = socketio.server.manager.is_connected(room)
+            return {
+                'status': 'healthy' if connected and latency < 1000 else 'degraded',
+                'latency': latency,
+                'connected': connected,
+                'uptime': time() - session.get('connection_time', time())
+            }
+    except Exception as e:
+        logger.error(f"Error checking connection health: {e}")
+        return {
+            'status': 'error',
+            'error': str(e)
+        }
 
 # Middleware
 @app.before_request
@@ -330,6 +440,11 @@ def cleanup_task():
     while True:
         try:
             app_state.cleanup_inactive_sessions()
+            # Проверяем здоровье соединений
+            for room in socketio.server.manager.get_rooms():
+                health = check_connection_health()
+                if health['status'] != 'healthy':
+                    logger.warning(f"Unhealthy connection in room {room}: {health}")
             socketio.sleep(300)  # Каждые 5 минут
         except Exception as e:
             logger.error(f"Error in cleanup task: {e}", exc_info=True)
@@ -338,293 +453,29 @@ def cleanup_task():
 # Запуск периодических задач
 socketio.start_background_task(cleanup_task)
 
-# Основные маршруты
-@app.route('/')
-def index():
-    """Главная страница"""
-    preferences = get_client_preferences()
-    return render_template(
-        'index.html',
-        preferences=preferences,
-        agents=AVAILABLE_AGENTS
-    )
-
-@app.route('/tutorial')
-def tutorial():
-    """Страница обучения"""
-    return render_template(
-        'tutorial.html',
-        preferences=get_client_preferences()
-    )
-
-@app.route('/training')
-def training():
-    """Страница режима тренировки"""
-    preferences = get_client_preferences()
-    return render_template(
-        'training.html',
-        preferences=preferences,
-        agents=AVAILABLE_AGENTS
-    )
-
-@app.route('/statistics')
-def statistics():
-    """Страница статистики"""
-    try:
-        full_stats = analytics_manager.get_full_statistics()
-        return render_template(
-            'statistics.html',
-            statistics=full_stats,
-            preferences=get_client_preferences()
-        )
-    except Exception as e:
-        logger.error(f"Error getting statistics: {e}", exc_info=True)
-        return render_template(
-            'error.html',
-            error="Failed to load statistics",
-            preferences=get_client_preferences()
-        )
-
-# API маршруты
-@app.route('/api/new_game', methods=['POST'])
-@handle_errors
-def new_game():
-    """Создает новую игру"""
-    data = request.get_json()
-    game_id = str(uuid.uuid4())
-    
-    game_config = {
-        'players': data.get('players', 2),
-        'fantasy_mode': (FantasyMode.PROGRESSIVE 
-                        if data.get('progressive_fantasy') 
-                        else FantasyMode.NORMAL),
-        'think_time': data.get('aiThinkTime', 30),
-        'agents': [],
-        'is_mobile': is_mobile()
-    }
-    
-    # Создаем AI агентов
-    for i in range(game_config['players'] - 1):
-        agent_type = data.get(f'agent_{i}', 'random')
-        agent = create_agent(
-            agent_type=agent_type,
-            position=i+1,
-            think_time=game_config['think_time']
-        )
-        game_config['agents'].append(agent)
-    
-    game = app_state.create_game(game_id, game_config)
-    game.start()
-    
-    session['current_game_id'] = game_id
-    emit_game_update(game, 'game_started')
-    
-    GAME_METRICS.labels(type='new_game').inc()
-    
-    return jsonify({
-        'status': 'ok',
-        'game_id': game_id,
-        'game_state': game.get_state()
-    })
-
-@app.route('/api/game/move', methods=['POST'])
-@require_game
-@handle_errors
-def make_move(game):
-    """Выполняет ход игрока"""
-    data = request.get_json()
-    success = game.make_move(
-        card=Card.from_dict(data.get('card')),
-        position=data.get('position')
-    )
-    
-    if success:
-        # Проверяем на фолы и скупы
-        if data.get('is_foul'):
-            game.state.fouls += 1
-        if data.get('is_scoop'):
-            game.state.scoops += 1
-        game.state.totalMoves += 1
-        
-        emit_game_update(game)
-        
-        # Обрабатываем ход AI если игра не закончена
-        if not game.is_game_over():
-            asyncio.create_task(process_ai_moves(game))
-        else:
-            check_game_over(game)
-            
-        return jsonify({
-            'status': 'ok',
-            'game_state': game.get_state()
-        })
-    
-    return jsonify({'error': 'Invalid move'}), 400
-
-async def process_ai_moves(game):
-    """Обрабатывает ходы AI последовательно"""
-    while not game.is_game_over() and game.current_player != 1:
-        success = await process_ai_move(game)
-        if not success:
-            break
-        if game.is_game_over():
-            check_game_over(game)
-            break
-
-@app.route('/api/game/fantasy', methods=['GET', 'POST'])
-@require_game
-@handle_errors
-def handle_fantasy(game):
-    """Обработка фантазии"""
-    if request.method == 'POST':
-        success = game.check_fantasy_entry(request.get_json().get('player'))
-        return jsonify({
-            'status': 'ok',
-            'fantasy_active': success,
-            'game_state': game.get_state()
-        })
-    else:
-        return jsonify({
-            'status': 'ok',
-            'fantasy_status': game.get_fantasy_status(),
-            'statistics': game.get_fantasy_statistics()
-        })
-
-@app.route('/api/game/undo', methods=['POST'])
-@require_game
-@handle_errors
-def undo_move(game):
-    """Отменяет последний ход"""
-    if game.undo_last_move():
-        emit_game_update(game)
-        return jsonify({
-            'status': 'ok',
-            'game_state': game.get_state()
-        })
-    return jsonify({'error': 'Cannot undo move'}), 400
-
-@app.route('/api/training/start', methods=['POST'])
-@handle_errors
-def start_training():
-    """Начинает тренировочную сессию"""
-    data = request.get_json()
-    session_id = str(uuid.uuid4())
-    
-    config = TrainingConfig(
-        fantasy_mode=data.get('fantasy_mode', False),
-        progressive_fantasy=data.get('progressive_fantasy', False),
-        think_time=data.get('think_time', 30)
-    )
-    
-    training_session = app_state.create_training_session(session_id, config)
-    session['training_session_id'] = session_id
-    
-    return jsonify({
-        'status': 'ok',
-        'session_id': session_id,
-        'initial_state': training_session.get_state()
-    })
-
-@app.route('/api/training/analyze', methods=['POST'])
-@handle_errors
-def analyze_training_position():
-    """Анализирует позицию в режиме тренировки"""
-    session_id = session.get('training_session_id')
-    if not session_id:
-        return jsonify({'error': 'No active training session'}), 400
-        
-    training_session = app_state.get_training_session(session_id)
-    if not training_session:
-        return jsonify({'error': 'Training session not found'}), 404
-        
-    analysis = training_session.analyze_position(
-        request.get_json().get('board_state')
-    )
-    
-    return jsonify({
-        'status': 'ok',
-        'analysis': analysis
-    })
-
-@app.route('/api/settings', methods=['GET', 'POST'])
-@handle_errors
-def handle_settings():
-    """Обработка пользовательских настроек"""
-    if request.method == 'POST':
-        settings = request.get_json()
-        session['preferences'] = {
-            'theme': settings.get('theme', 'light'),
-            'animation_speed': settings.get('animation_speed', 'normal'),
-            'sound_enabled': settings.get('sound_enabled', True)
-        }
-        return jsonify({'status': 'ok'})
-    
-    return jsonify({
-        'status': 'ok',
-        'preferences': get_client_preferences()
-    })
-
-@app.route('/api/statistics/full')
-@handle_errors
-def get_full_statistics():
-    """Возвращает полную статистику"""
-    stats = analytics_manager.get_full_statistics()
-    return jsonify({
-        'status': 'ok',
-        'statistics': stats
-    })
-
-@app.route('/manifest.json')
-def manifest():
-    """PWA manifest"""
-    return jsonify({
-        "name": "Open Face Chinese Poker",
-        "short_name": "OFC Poker",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#ffffff",
-        "theme_color": "#007bff",
-        "icons": [
-            {
-                "src": url_for('static', filename='images/icon-192.png'),
-                "sizes": "192x192",
-                "type": "image/png"
-            },
-            {
-                "src": url_for('static', filename='images/icon-512.png'),
-                "sizes": "512x512",
-                "type": "image/png"
-            }
-        ]
-    })
-
-@app.route('/service-worker.js')
-def service_worker():
-    """Service Worker для PWA"""
-    response = make_response(
-        send_from_directory('static', 'js/service-worker.js')
-    )
-    response.headers['Content-Type'] = 'application/javascript'
-    return response
-
-@app.route('/offline')
-def offline():
-    """Страница для оффлайн режима"""
-    return render_template(
-        'offline.html',
-        preferences=get_client_preferences()
-    )
-
 # WebSocket обработчики
 @socketio.on('connect')
 def handle_connect():
     """Обработка подключения WebSocket"""
     WEBSOCKET_CONNECTIONS.inc()
+    connections['active'] += 1
+    connections['total'] += 1
+    
     logger.info(f"WebSocket connected: {request.sid}")
     
     room = session.get('user_id')
     if room:
         join_room(room)
+        emit('connection_established', {
+            'status': 'connected',
+            'user_id': room,
+            'timestamp': datetime.now().isoformat(),
+            'connection_info': {
+                'sid': request.sid,
+                'transport': request.environ.get('wsgi.websocket_version'),
+                'latency': socketio.server.manager.get_latency(room)
+            }
+        })
     
     game_id = session.get('current_game_id')
     if game_id:
@@ -638,6 +489,7 @@ def handle_connect():
 def handle_disconnect():
     """Обработка отключения WebSocket"""
     logger.info(f"WebSocket disconnected: {request.sid}")
+    connections['active'] -= 1
     
     game_id = session.get('current_game_id')
     if game_id:
@@ -648,6 +500,60 @@ def handle_disconnect():
     room = session.get('user_id')
     if room:
         leave_room(room)
+
+@socketio.on('connect_error')
+def handle_connect_error(error):
+    """Обработка ошибок подключения"""
+    connections['errors'] += 1
+    connections['last_error'] = str(error)
+    logger.error(f"WebSocket connection error: {error}")
+    WEBSOCKET_ERRORS.labels(type='connection_error').inc()
+    emit('connection_status', {
+        'status': 'error',
+        'message': str(error),
+        'timestamp': datetime.now().isoformat()
+    })
+
+@socketio.on('game_action')
+@handle_errors
+def handle_game_action(data):
+    """Обработка игровых действий"""
+    game_id = session.get('current_game_id')
+    if not game_id:
+        emit('error', {'message': 'No active game'})
+        return
+    
+    game = app_state.get_game(game_id)
+    if not game:
+        emit('error', {'message': 'Game not found'})
+        return
+        
+    action_type = data.get('type')
+    logger.debug(f"Game action received: {action_type}")
+    
+    try:
+        if action_type == 'select_mode':
+            game.set_mode(data.get('mode'))
+            logger.info(f"Game mode changed to: {data.get('mode')}")
+        elif action_type == 'set_think_time':
+            game.set_think_time(data.get('time'))
+            logger.info(f"AI think time changed to: {data.get('time')}s")
+        elif action_type == 'toggle_fantasy':
+            game.toggle_fantasy_mode()
+            logger.info("Fantasy mode toggled")
+        elif action_type == 'select_players':
+            game.set_players_count(data.get('count'))
+            logger.info(f"Players count changed to: {data.get('count')}")
+        
+        emit_game_update(game)
+        
+    except Exception as e:
+        logger.error(f"Error processing game action: {e}", exc_info=True)
+        emit('error', {
+            'message': 'Failed to process game action',
+            'error': str(e)
+        })
+        WEBSOCKET_ERRORS.labels(type='game_action_error').inc()
 
 @socketio.on('request_analysis')
 @handle_errors
@@ -663,28 +569,249 @@ def handle_analysis_request(data):
         emit('error', {'message': 'Game not found'})
         return
         
-    analysis = game.analyze_position(data.get('position'))
-    emit('position_analysis', {
-        'analysis': analysis,
-        'position': data.get('position')
-    })
+    try:
+        analysis = game.analyze_position(data.get('position'))
+        emit('position_analysis', {
+            'analysis': analysis,
+            'position': data.get('position'),
+            'timestamp': datetime.now().isoformat()
+        })
+        logger.debug(f"Position analysis sent for position: {data.get('position')}")
+    except Exception as e:
+        logger.error(f"Error analyzing position: {e}", exc_info=True)
+        emit('error', {
+            'message': 'Failed to analyze position',
+            'error': str(e)
+        })
+        WEBSOCKET_ERRORS.labels(type='analysis_error').inc()
 
 @socketio.on('chat_message')
 def handle_chat_message(data):
     """Обработка сообщений чата"""
     room = session.get('user_id')
     if room:
-        socketio.emit('chat_message', {
-            'user': session.get('user_id'),
-            'message': data.get('message'),
-            'timestamp': datetime.now().isoformat()
-        }, room=room)
+        try:
+            socketio.emit('chat_message', {
+                'user': session.get('user_id'),
+                'message': data.get('message'),
+                'timestamp': datetime.now().isoformat()
+            }, room=room)
+            logger.debug(f"Chat message sent in room {room}")
+        except Exception as e:
+            logger.error(f"Error sending chat message: {e}", exc_info=True)
+            WEBSOCKET_ERRORS.labels(type='chat_error').inc()
 
 @socketio.on_error()
 def handle_error(e):
     """Глобальный обработчик ошибок WebSocket"""
     logger.error(f"WebSocket error: {e}", exc_info=True)
-    emit('error', {'message': 'Internal server error'})
+    WEBSOCKET_ERRORS.labels(type='general_error').inc()
+    emit('error', {
+        'message': 'Internal server error',
+        'error': str(e),
+        'timestamp': datetime.now().isoformat()
+    })
+
+# API маршруты
+@app.route('/')
+def index():
+    """Главная страница"""
+    preferences = get_client_preferences()
+    connection_health = check_connection_health()
+    return render_template(
+        'index.html',
+        preferences=preferences,
+        agents=AVAILABLE_AGENTS,
+        connection_status=connection_health
+    )
+
+@app.route('/api/health')
+def health_check():
+    """Проверка здоровья приложения"""
+    health_status = {
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'websocket': {
+            'active_connections': connections['active'],
+            'total_connections': connections['total'],
+            'errors': connections['errors'],
+            'last_error': connections['last_error']
+        },
+        'server': {
+            'uptime': time() - app.start_time if hasattr(app, 'start_time') else 0,
+            'memory_usage': os.getpid(),
+            'active_games': len(app_state.games)
+        }
+    }
+    
+    connection_health = check_connection_health()
+    if connection_health['status'] != 'healthy':
+        health_status['status'] = 'degraded'
+        health_status['websocket']['health'] = connection_health
+    
+    return jsonify(health_status)
+
+@app.route('/api/new_game', methods=['POST'])
+@handle_errors
+def new_game():
+    """Создает новую игру"""
+    data = request.get_json()
+    game_id = str(uuid.uuid4())
+    
+    try:
+        game_config = {
+            'players': data.get('players', 2),
+            'fantasy_mode': (FantasyMode.PROGRESSIVE 
+                            if data.get('progressive_fantasy') 
+                            else FantasyMode.NORMAL),
+            'think_time': data.get('aiThinkTime', 30),
+            'agents': [],
+            'is_mobile': is_mobile()
+        }
+        
+        # Создаем AI агентов
+        for i in range(game_config['players'] - 1):
+            agent_type = data.get(f'agent_{i}', 'random')
+            agent = create_agent(
+                agent_type=agent_type,
+                position=i+1,
+                think_time=game_config['think_time']
+            )
+            game_config['agents'].append(agent)
+        
+        game = app_state.create_game(game_id, game_config)
+        game.start()
+        
+        session['current_game_id'] = game_id
+        emit_game_update(game, 'game_started')
+        
+        GAME_METRICS.labels(type='new_game').inc()
+        logger.info(f"New game created: {game_id}")
+        
+        return jsonify({
+            'status': 'ok',
+            'game_id': game_id,
+            'game_state': game.get_state(),
+            'connection_status': check_connection_health()
+        })
+    except Exception as e:
+        logger.error(f"Error creating new game: {e}", exc_info=True)
+        return jsonify({
+            'error': 'Failed to create game',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/game/move', methods=['POST'])
+@require_game
+@handle_errors
+def make_move(game):
+    """Выполняет ход игрока"""
+    data = request.get_json()
+    try:
+        success = game.make_move(
+            card=Card.from_dict(data.get('card')),
+            position=data.get('position')
+        )
+        
+        if success:
+            # Проверяем на фолы и скупы
+            if data.get('is_foul'):
+                game.state.fouls += 1
+            if data.get('is_scoop'):
+                game.state.scoops += 1
+            game.state.totalMoves += 1
+            
+            emit_game_update(game)
+            logger.debug(f"Move made: {data.get('card')} to position {data.get('position')}")
+            
+            # Обрабатываем ход AI если игра не закончена
+            if not game.is_game_over():
+                asyncio.create_task(process_ai_moves(game))
+            else:
+                check_game_over(game)
+                
+            return jsonify({
+                'status': 'ok',
+                'game_state': game.get_state(),
+                'connection_status': check_connection_health()
+            })
+        
+        return jsonify({'error': 'Invalid move'}), 400
+
+async def process_ai_moves(game):
+    """Обрабатывает ходы AI последовательно"""
+    while not game.is_game_over() and game.current_player != 1:
+        success = await process_ai_move(game)
+        if not success:
+            break
+        if game.is_game_over():
+            check_game_over(game)
+            break
+
+@app.route('/api/game/state', methods=['GET'])
+@require_game
+@handle_errors
+def get_game_state(game):
+    """Получает текущее состояние игры"""
+    return jsonify({
+        'status': 'ok',
+        'game_state': game.get_state(),
+        'connection_status': check_connection_health()
+    })
+
+@app.route('/api/game/save', methods=['POST'])
+@require_game
+@handle_errors
+def save_game(game):
+    """Сохраняет текущую игру"""
+    if save_game_progress(game):
+        return jsonify({'status': 'ok'})
+    return jsonify({'error': 'Failed to save game'}), 500
+
+@app.route('/api/game/load', methods=['POST'])
+@handle_errors
+def load_game():
+    """Загружает сохраненную игру"""
+    game = load_game_progress()
+    if game:
+        emit_game_update(game, 'game_loaded')
+        return jsonify({
+            'status': 'ok',
+            'game_state': game.get_state()
+        })
+    return jsonify({'error': 'No saved game found'}), 404
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+@handle_errors
+def handle_settings():
+    """Обработка пользовательских настроек"""
+    if request.method == 'POST':
+        settings = request.get_json()
+        session['preferences'].update({
+            'theme': settings.get('theme', 'light'),
+            'animation_speed': settings.get('animation_speed', 'normal'),
+            'sound_enabled': settings.get('sound_enabled', True)
+        })
+        return jsonify({'status': 'ok'})
+    
+    return jsonify({
+        'status': 'ok',
+        'preferences': get_client_preferences()
+    })
+
+@app.route('/api/statistics', methods=['GET'])
+@handle_errors
+def get_statistics():
+    """Получение статистики"""
+    return jsonify({
+        'status': 'ok',
+        'statistics': analytics_manager.get_full_statistics(),
+        'server_stats': {
+            'connections': connections,
+            'active_games': len(app_state.games),
+            'uptime': time() - app.start_time if hasattr(app, 'start_time') else 0
+        }
+    })
 
 # Обработка ошибок
 @app.errorhandler(404)
@@ -713,22 +840,29 @@ def internal_error(error):
 
 # Запуск приложения
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    debug = config.get('web.debug', False)
-    
-    logger.info(f"Starting server on port {port} (debug={debug})")
-    logger.info(f"Available agents: {list(AVAILABLE_AGENTS.keys())}")
-    logger.info(f"Application version: {config.get('app.version', 'unknown')}")
-    
     try:
+        # Установка времени запуска
+        app.start_time = time()
+        
+        # Получение настроек из конфигурации
+        port = int(os.environ.get('PORT', config.get('web.port', 5000)))
+        debug = config.get('web.debug', False)
+        
+        logger.info(f"Starting server on port {port} (debug={debug})")
+        logger.info(f"Available agents: {list(AVAILABLE_AGENTS.keys())}")
+        logger.info(f"Application version: {config.get('app.version', 'unknown')}")
+        
+        # Запуск сервера
         socketio.run(
             app,
             host='0.0.0.0',
             port=port,
             debug=debug,
             use_reloader=debug,
-            log_output=True
+            log_output=True,
+            cors_allowed_origins=config.get('web.cors_origins', "*")
         )
     except Exception as e:
-        logger.error(f"Failed to start server: {e}", exc_info=True)
+        logger.critical(f"Failed to start server: {e}", exc_info=True)
         sys.exit(1)
+
