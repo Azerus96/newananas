@@ -737,18 +737,17 @@ def make_move(game):
             })
         
         
-           return jsonify({'error': 'Invalid move'}), 400
+            return jsonify({'error': 'Invalid move'}), 400
 
-           async def process_ai_moves(game):
-               """Обрабатывает ходы AI последовательно"""
-               while not game.is_game_over() and game.current_player != 1:
-                   success = await process_ai_move(game)
-                       if not success:
-                           break
-                       if game.is_game_over():
-                           check_game_over(game)
-                           break
-
+async def process_ai_moves(game):
+    """Обрабатывает ходы AI последовательно"""
+    while not game.is_game_over() and game.current_player != 1:
+        success = await process_ai_move(game)
+        if not success:
+            break
+        if game.is_game_over():
+            check_game_over(game)
+            break
 
 @app.route('/api/game/state', methods=['GET'])
 @require_game
@@ -760,9 +759,6 @@ def get_game_state(game):
         'game_state': game.get_state(),
         'connection_status': check_connection_health()
     })
-    "
-
-
 
 @app.route('/api/game/save', methods=['POST'])
 @require_game
@@ -869,5 +865,4 @@ if __name__ == '__main__':
         )
     except Exception as e:
         logger.critical(f"Failed to start server: {e}", exc_info=True)
-        sys.exit(1)
-
+        sys.exit(1)         
