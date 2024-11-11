@@ -1,7 +1,39 @@
-// web/static/js/game.js
-
 class Game {
     constructor() {
+        // Инициализация с проверкой готовности DOM
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.initialize());
+        } else {
+            this.initialize();
+        }
+    }
+
+    async initialize() {
+        try {
+            await this.waitForDOM();
+            this.initializeState();
+            this.ui = new GameUI(this);
+            await this.loadResources();
+            this.setupEventListeners();
+            this.setupSocketHandlers();
+            this.loadSavedState();
+        } catch (error) {
+            console.error('Game initialization failed:', error);
+            this.handleInitializationError(error);
+        }
+    }
+
+    waitForDOM() {
+        return new Promise(resolve => {
+            if (document.readyState === 'complete') {
+                resolve();
+            } else {
+                document.addEventListener('DOMContentLoaded', resolve);
+            }
+        });
+    }
+
+    initializeState() {
         this.state = {
             players: 2,
             currentPlayer: 0,
@@ -18,240 +50,144 @@ class Game {
             totalGames: 0,
             animationEnabled: true
         };
+    }
 
-        this.ui = new GameUI(this);
-        this.stats = new GameStatistics();
-        this.socket = io();
-        this.setupSocketHandlers();
-        this.initializeEventListeners();
-        this.setupAnimationControl();
+    async loadResources() {
+        try {
+            await Promise.all([
+                this.loadAgents(),
+                this.loadSettings(),
+                this.loadStatistics()
+            ]);
+        } catch (error) {
+            console.error('Failed to load resources:', error);
+            throw new Error('Resource loading failed');
+        }
+    }
+
+    setupEventListeners() {
+        // Обработка клавиатуры с предотвращением множественных обработчиков
+        const handleKeyboard = this.handleKeyboardInput.bind(this);
+        document.removeEventListener('keydown', handleKeyboard);
+        document.addEventListener('keydown', handleKeyboard);
+
+        // Обработка изменения размера окна
+        const handleResize = this.handleWindowResize.bind(this);
+        window.removeEventListener('resize', handleResize);
+        window.addEventListener('resize', handleResize);
+
+        // Обработка состояния сети
+        window.addEventListener('online', () => this.handleOnlineStatus(true));
+        window.addEventListener('offline', () => this.handleOnlineStatus(false));
     }
 
     setupSocketHandlers() {
-        this.socket.on('game_state', (state) => {
-            this.updateGameState(state);
+        this.socket = io({
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000
         });
 
-        this.socket.on('ai_thinking', (data) => {
-            this.ui.showAIThinking(data.player, data.thinkTime);
-        });
-
-        this.socket.on('game_over', (result) => {
-            this.handleGameOver(result);
-        });
-
-        this.socket.on('fantasy_update', (data) => {
-            this.handleFantasyUpdate(data);
-        });
-
-        this.socket.on('error', (error) => {
-            this.ui.showError(error.message);
-        });
-
-        this.socket.on('connect', () => {
-            if (this.state.gameStarted) {
-                this.loadSavedState();
-            }
-        });
+        this.socket.on('connect', () => this.handleSocketConnect());
+        this.socket.on('disconnect', () => this.handleSocketDisconnect());
+        this.socket.on('error', (error) => this.handleSocketError(error));
+        this.socket.on('game_state', (state) => this.handleGameState(state));
+        this.socket.on('game_over', (result) => this.handleGameOver(result));
     }
 
-    initializeEventListeners() {
-        // Обработчики меню
-        document.querySelectorAll('.mode-btn').forEach(btn => {
-            btn.addEventListener('click', () => this.setPlayerCount(parseInt(btn.dataset.players)));
-        });
-
-        document.getElementById('fantasyType').addEventListener('change', (e) => {
-            this.state.fantasyMode = e.target.value;
-        });
-
-        document.getElementById('aiThinkTime').addEventListener('input', (e) => {
-            this.state.aiThinkTime = parseInt(e.target.value);
-            document.getElementById('thinkTimeValue').textContent = `${e.target.value}s`;
-        });
-
-        // Управление анимацией
-        document.getElementById('animationControl').addEventListener('change', (e) => {
-            this.state.animationEnabled = e.target.value !== 'off';
-            document.body.classList.toggle('animations-disabled', !this.state.animationEnabled);
-        });
-
-        // Основные кнопки управления
-        document.getElementById('startGame').addEventListener('click', () => this.startGame());
-        document.getElementById('trainingMode').addEventListener('click', () => this.startTrainingMode());
-        document.getElementById('viewStats').addEventListener('click', () => this.showFullStatistics());
-        document.getElementById('tutorial').addEventListener('click', () => this.showTutorial());
-
-        // Обработка навигации
-        window.onpopstate = (event) => {
-            if (this.state.gameStarted) {
-                this.saveCurrentState();
-                this.ui.showConfirmDialog(
-                    "Выйти из игры?",
-                    "Хотите вернуться в меню? Ваш прогресс будет сохранен.",
-                    () => this.returnToMenu(),
-                    () => history.pushState(null, '', window.location.href)
-                );
-            }
-        };
-
-        // Обработка обновления страницы
-        window.onbeforeunload = () => {
-            if (this.state.gameStarted) {
-                this.saveCurrentState();
-            }
-        };
-
-        // Клавиатурные сокращения
-        document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
-    }
-
-    setupAnimationControl() {
-        const animationControl = document.getElementById('animationControl');
-        if (animationControl) {
-            animationControl.innerHTML = `
-                <option value="normal">Normal</option>
-                <option value="fast">Fast</option>
-                <option value="off">Off</option>
-            `;
-        }
-    }
-
-    async setPlayerCount(count) {
-        this.state.players = count;
-        this.ui.updatePlayerCount(count);
-        await this.loadAvailableAgents();
-    }
-
-    async loadAvailableAgents() {
+    async loadSavedState() {
         try {
-            const response = await fetch('/api/agents');
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.state.availableAgents = data.agents;
-                this.ui.updateAgentSelectors(data.agents, this.state.players);
+            const savedState = localStorage.getItem('gameState');
+            if (savedState) {
+                const state = JSON.parse(savedState);
+                if (this.isValidSavedState(state)) {
+                    await this.restoreState(state);
+                }
             }
         } catch (error) {
-            console.error('Failed to load agents:', error);
-            this.ui.showError('Failed to load AI agents');
+            console.error('Failed to load saved state:', error);
         }
     }
 
-    async startGame() {
+    isValidSavedState(state) {
+        return state && 
+               typeof state === 'object' && 
+               'gameStarted' in state &&
+               'players' in state;
+    }
+
+    async restoreState(state) {
         try {
-            const gameConfig = {
-                players: this.state.players,
-                fantasyMode: this.state.fantasyMode,
-                aiThinkTime: this.state.aiThinkTime,
-                agents: this.collectAgentConfigs(),
-                animationEnabled: this.state.animationEnabled
-            };
-
-            const response = await fetch('/api/new_game', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(gameConfig)
-            });
-
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.state.gameStarted = true;
-                this.state.gameId = data.game_id;
-                this.ui.switchToGame();
-                this.initializeGameState(data.game_state);
-                history.pushState({ gameStarted: true }, '', '/game');
-            } else {
-                this.ui.showError(data.message || 'Failed to start game');
+            this.state = { ...this.state, ...state };
+            if (this.state.gameStarted) {
+                await this.resumeGame();
             }
         } catch (error) {
-            console.error('Failed to start game:', error);
-            this.ui.showError('Failed to start game');
+            console.error('Failed to restore state:', error);
+            this.resetState();
         }
     }
 
-    collectAgentConfigs() {
-        const configs = [];
-        document.querySelectorAll('.ai-selector').forEach((selector, index) => {
-            const agentType = selector.querySelector('select').value;
-            const useLatest = selector.querySelector('#useLatestModel')?.checked ?? true;
-            configs.push({
-                type: agentType,
-                useLatestModel: useLatest,
-                thinkTime: this.state.aiThinkTime,
-                position: index + 1
-            });
-        });
-        return configs;
-    }
-
-    initializeGameState(gameState) {
-        this.state = { ...this.state, ...gameState };
-        this.ui.updateGameState(this.state);
-        this.startGameLoop();
-    }
-
-    async startGameLoop() {
-        while (this.state.gameStarted && !this.state.gameOver) {
-            if (this.state.currentPlayer === 0) {
-                await this.handlePlayerTurn();
-            } else {
-                await this.handleAITurn();
-            }
-            await this.checkGameState();
-        }
-    }
-
-    async handlePlayerTurn() {
-        this.ui.enablePlayerInput();
-        return new Promise(resolve => {
-            this.resolvePlayerTurn = resolve;
-        });
-    }
-
-    async handleAITurn() {
-        this.ui.showAIThinking(this.state.currentPlayer);
+    async resumeGame() {
         try {
-            const response = await fetch('/api/ai_move', {
+            const response = await fetch('/api/resume_game', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    player: this.state.currentPlayer,
-                    gameId: this.state.gameId
+                    gameState: this.state
                 })
             });
 
-            const data = await response.json();
-            if (data.status === 'ok') {
-            if (this.state.animationEnabled) {
-                await this.ui.animateMove(data.move);
-            } else {
-                this.ui.applyMove(data.move);
+            if (!response.ok) {
+                throw new Error('Failed to resume game');
             }
-            this.updateGameState(data.game_state);
-            
-            // Проверяем на фолы и скупы
-            if (data.move.isFoul) {
-                this.state.fouls++;
-            }
-            if (data.move.isScoop) {
-                this.state.scoops++;
-            }
-            this.state.totalMoves++;
-        }
-    } catch (error) {
-        console.error('AI move failed:', error);
-        this.ui.showError('AI move failed');
-    } finally {
-        this.ui.hideAIThinking();
-    }
-}
 
-async makeMove(card, position) {
-    try {
+            const data = await response.json();
+            this.updateGameState(data.gameState);
+        } catch (error) {
+            console.error('Failed to resume game:', error);
+            this.ui.showError('Failed to resume game');
+        }
+    }
+
+    resetState() {
+        this.initializeState();
+        localStorage.removeItem('gameState');
+    }
+
+    async makeMove(card, position) {
+        if (!this.validateMove(card, position)) {
+            this.ui.showError('Invalid move');
+            return false;
+        }
+
+        try {
+            const response = await this.sendMove(card, position);
+            if (response.status === 'ok') {
+                await this.handleMoveSuccess(response);
+                return true;
+            } else {
+                this.handleMoveError(response.error);
+                return false;
+            }
+        } catch (error) {
+            this.handleMoveError(error);
+            return false;
+        }
+    }
+
+    validateMove(card, position) {
+        if (!this.state.gameStarted || this.state.currentPlayer !== 0) {
+            return false;
+        }
+
+        return this.isValidCard(card) && this.isValidPosition(position);
+    }
+
+    async sendMove(card, position) {
         const response = await fetch('/api/make_move', {
             method: 'POST',
             headers: {
@@ -264,310 +200,274 @@ async makeMove(card, position) {
             })
         });
 
-        const data = await response.json();
-        if (data.status === 'ok') {
-            if (this.state.animationEnabled) {
-                await this.ui.animateMove({ card, position });
-            } else {
-                this.ui.applyMove({ card, position });
-            }
-            
-            this.updateGameState(data.game_state);
-            
-            // Обновляем статистику
-            if (data.move.isFoul) {
-                this.state.fouls++;
-            }
-            if (data.move.isScoop) {
-                this.state.scoops++;
-            }
-            this.state.totalMoves++;
-            
-            if (this.resolvePlayerTurn) {
-                this.resolvePlayerTurn();
-            }
-            return true;
-        } else {
-            this.ui.showError(data.message || 'Invalid move');
-            return false;
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
         }
-    } catch (error) {
+
+        return await response.json();
+    }
+
+    async handleMoveSuccess(response) {
+        if (this.state.animationEnabled) {
+            await this.ui.animateMove(response.move);
+        } else {
+            this.ui.applyMove(response.move);
+        }
+
+        this.updateGameState(response.gameState);
+        this.updateStatistics(response.move);
+    }
+
+    handleMoveError(error) {
         console.error('Move failed:', error);
         this.ui.showError('Failed to make move');
-        return false;
     }
-}
 
-updateGameState(newState) {
-    this.state = { ...this.state, ...newState };
-    this.ui.updateGameState(this.state);
-    this.stats.updateStats({
-        foulsRate: this.state.fouls / this.state.totalMoves,
-        scoopsRate: this.state.scoops / this.state.totalMoves,
-        ...this.state
-    });
-    
-    this.saveCurrentState();
-}
+    updateGameState(newState) {
+        this.state = { ...this.state, ...newState };
+        this.ui.updateGameState(this.state);
+        this.saveState();
+    }
 
-async checkGameState() {
-    try {
-        const response = await fetch(`/api/game/state?gameId=${this.state.gameId}`);
-        const data = await response.json();
-        if (data.status === 'ok') {
-            this.updateGameState(data.game_state);
-            if (data.game_state.gameOver) {
-                this.handleGameOver(data.game_state.result);
+    updateStatistics(move) {
+        if (move.isFoul) {
+            this.state.fouls++;
+        }
+        if (move.isScoop) {
+            this.state.scoops++;
+        }
+        this.state.totalMoves++;
+    }
+
+    saveState() {
+        try {
+            localStorage.setItem('gameState', JSON.stringify(this.state));
+        } catch (error) {
+            console.error('Failed to save state:', error);
+        }
+    }
+
+    handleSocketConnect() {
+        console.log('Socket connected');
+        if (this.state.gameStarted) {
+            this.syncGameState();
+        }
+    }
+
+    handleSocketDisconnect() {
+        console.log('Socket disconnected');
+        this.ui.showError('Connection lost. Trying to reconnect...');
+    }
+
+    handleSocketError(error) {
+        console.error('Socket error:', error);
+        this.ui.showError('Connection error occurred');
+    }
+
+    async syncGameState() {
+        try {
+            const response = await fetch(`/api/game/state/${this.state.gameId}`);
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.updateGameState(data.gameState);
             }
-        }
-    } catch (error) {
-        console.error('Failed to check game state:', error);
-    }
-}
-
-handleGameOver(result) {
-    this.state.gameStarted = false;
-    this.state.gameOver = true;
-    this.state.totalGames++;
-    
-    // Обновляем общую статистику
-    this.stats.saveGameResult({
-        ...result,
-        foulsRate: this.state.fouls / this.state.totalMoves,
-        scoopsRate: this.state.scoops / this.state.totalMoves
-    });
-    
-    this.ui.showGameOver(result);
-    localStorage.removeItem('savedGameState');
-}
-
-handleFantasyUpdate(data) {
-    if (data.status === 'active') {
-        this.state.inFantasy = true;
-        this.ui.showFantasyMode();
-    } else {
-        this.state.inFantasy = false;
-        this.ui.hideFantasyMode();
-    }
-}
-
-handleKeyboardShortcuts(e) {
-    if (e.ctrlKey || e.metaKey) {
-        switch(e.key) {
-            case 'z':
-                e.preventDefault();
-                this.undoLastMove();
-                break;
-            case 's':
-                e.preventDefault();
-                this.saveCurrentState();
-                break;
-            case 'f':
-                e.preventDefault();
-                this.toggleFullscreen();
-                break;
+        } catch (error) {
+            console.error('Failed to sync game state:', error);
         }
     }
-}
 
-async undoLastMove() {
-    if (!this.state.gameStarted || this.state.currentPlayer !== 0) return;
-    
-    try {
-        const response = await fetch('/api/undo_move', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                gameId: this.state.gameId
-            })
-        });
-
-        const data = await response.json();
-        if (data.status === 'ok') {
-            this.updateGameState(data.game_state);
-            this.ui.undoLastMove();
+    handleGameState(state) {
+        this.updateGameState(state);
+        if (state.currentPlayer !== 0 && !this.state.aiThinking) {
+            this.handleAITurn();
         }
-    } catch (error) {
-        console.error('Failed to undo move:', error);
-        this.ui.showError('Failed to undo move');
-    }
-}
-
-toggleFullscreen() {
-    if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
-    } else {
-        document.exitFullscreen();
-    }
-}
-
-showTutorial() {
-    this.ui.showTutorial(`
-        <h2>Как играть в OFC Poker</h2>
-        
-        <h3>Основные правила</h3>
-        <p>Open Face Chinese Poker - это покерная игра, где каждый игрок должен составить три покерных комбинации,
-        располагая карты в три ряда: верхний (3 карты), средний (5 карт) и нижний (5 карт).</p>
-        
-        <h3>Размещение карт</h3>
-        <ul>
-            <li>Карты можно размещать только сверху вниз</li>
-            <li>Нижняя комбинация должна быть сильнее средней</li>
-            <li>Средняя комбинация должна быть сильнее верхней</li>
-        </ul>
-        
-        <h3>Фантазия</h3>
-        <p>Фантазия активируется, когда игрок собирает определенные комбинации. В режиме фантазии
-        игрок получает дополнительные карты для размещения.</p>
-        
-        <h3>Статистика</h3>
-        <ul>
-            <li>Fouls Rate - процент нарушений правила старшинства комбинаций</li>
-            <li>Scoops Rate - процент ситуаций, когда игрок выигрывает все три ряда</li>
-        </ul>
-        
-        <h3>Управление</h3>
-        <ul>
-            <li>Перетащите карту в нужную позицию</li>
-            <li>Ctrl+Z - отменить последний ход</li>
-            <li>Ctrl+S - сохранить игру</li>
-            <li>Ctrl+F - полноэкранный режим</li>
-        </ul>
-        
-        <h3>Настройки</h3>
-        <ul>
-            <li>Animation: Normal/Fast/Off - управление анимациями</li>
-            <li>AI Think Time - время на ход AI</li>
-            <li>Fantasy Type - тип фантазии (Normal/Progressive/Disabled)</li>
-                <li>Sound Effects - включение/выключение звуковых эффектов</li>
-            </ul>
-            
-            <h3>Советы</h3>
-            <ul>
-                <li>Планируйте размещение карт заранее</li>
-                <li>Следите за вышедшими картами</li>
-                <li>Используйте статистику для улучшения игры</li>
-                <li>В мобильной версии можно использовать свайпы для навигации</li>
-            </ul>`);
     }
 
-    saveCurrentState() {
-        if (!this.state.gameStarted) return;
-
-        const saveState = {
-            timestamp: Date.now(),
-            gameState: this.state
-        };
+    async handleAITurn() {
+        this.state.aiThinking = true;
+        this.ui.showAIThinking(this.state.currentPlayer);
 
         try {
-            localStorage.setItem('savedGameState', JSON.stringify(saveState));
-            
-            fetch('/api/save_game_state', {
+            const response = await fetch('/api/ai_move', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(saveState)
+                body: JSON.stringify({
+                    gameId: this.state.gameId,
+                    player: this.state.currentPlayer
+                })
             });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                await this.handleAIMove(data);
+            } else {
+                throw new Error(data.error || 'AI move failed');
+            }
         } catch (error) {
-            console.error('Failed to save game state:', error);
+            console.error('AI move failed:', error);
+            this.ui.showError('AI failed to make a move');
+        } finally {
+            this.state.aiThinking = false;
+            this.ui.hideAIThinking();
         }
     }
 
-    async loadSavedState() {
-        try {
-            const serverResponse = await fetch('/api/load_game_state', {
-                method: 'POST'
-            });
-            
-            if (serverResponse.ok) {
-                const data = await serverResponse.json();
-                if (data.status === 'ok') {
-                    this.initializeGameState(data.game_state);
-                    return;
-                }
-            }
-
-            const savedState = localStorage.getItem('savedGameState');
-            if (savedState) {
-                const { timestamp, gameState } = JSON.parse(savedState);
-                
-                if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
-                    this.initializeGameState(gameState);
-                } else {
-                    localStorage.removeItem('savedGameState');
-                }
-            }
-        } catch (error) {
-            console.error('Failed to load saved state:', error);
-        }
-    }
-
-    returnToMenu() {
-        this.state.gameStarted = false;
-        this.state.gameOver = false;
-        this.ui.showMainMenu();
-        history.pushState(null, '', '/');
-    }
-
-    calculateRates() {
-        return {
-            foulsRate: this.state.totalMoves ? (this.state.fouls / this.state.totalMoves) * 100 : 0,
-            scoopsRate: this.state.totalMoves ? (this.state.scoops / this.state.totalMoves) * 100 : 0
-        };
-    }
-
-    getGameStatistics() {
-        const rates = this.calculateRates();
-        return {
-            totalGames: this.state.totalGames,
-            totalMoves: this.state.totalMoves,
-            fouls: this.state.fouls,
-            scoops: this.state.scoops,
-            foulsRate: rates.foulsRate.toFixed(1) + '%',
-            scoopsRate: rates.scoopsRate.toFixed(1) + '%'
-        };
-    }
-}
-
-// Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => {
-    window.game = new Game();
-});
-
-// Обработка мобильных жестов
-if ('ontouchstart' in window) {
-    document.addEventListener('touchstart', handleTouchStart);
-    document.addEventListener('touchmove', handleTouchMove);
-}
-
-let xDown = null;
-let yDown = null;
-
-function handleTouchStart(evt) {
-    xDown = evt.touches[0].clientX;
-    yDown = evt.touches[0].clientY;
-}
-
-function handleTouchMove(evt) {
-    if (!xDown || !yDown) return;
-
-    const xUp = evt.touches[0].clientX;
-    const yUp = evt.touches[0].clientY;
-
-    const xDiff = xDown - xUp;
-    const yDiff = yDown - yUp;
-
-    if (Math.abs(xDiff) > Math.abs(yDiff)) {
-        if (xDiff > 0) {
-            window.game.ui.openSidePanel();
+    async handleAIMove(data) {
+        if (this.state.animationEnabled) {
+            await this.ui.animateMove(data.move);
         } else {
-            window.game.ui.closeSidePanel();
+            this.ui.applyMove(data.move);
+        }
+        this.updateGameState(data.gameState);
+        this.updateStatistics(data.move);
+    }
+
+    handleGameOver(result) {
+        this.state.gameStarted = false;
+        this.state.gameOver = true;
+        this.state.totalGames++;
+        
+        this.updateFinalStatistics(result);
+        this.ui.showGameOver(result);
+        this.resetState();
+    }
+
+    updateFinalStatistics(result) {
+        const stats = {
+            gamesPlayed: this.state.totalGames,
+            wins: result.winner === 0 ? this.state.wins + 1 : this.state.wins,
+            foulsRate: this.state.fouls / this.state.totalMoves,
+            scoopsRate: this.state.scoops / this.state.totalMoves
+        };
+
+        try {
+            fetch('/api/statistics', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(stats)
+            });
+        } catch (error) {
+            console.error('Failed to update statistics:', error);
         }
     }
 
-    xDown = null;
-    yDown = null;
+    handleKeyboardInput(e) {
+        if (e.ctrlKey || e.metaKey) {
+            switch(e.key.toLowerCase()) {
+                case 'z':
+                    e.preventDefault();
+                    this.undoLastMove();
+                    break;
+                case 's':
+                    e.preventDefault();
+                    this.saveGame();
+                    break;
+                case 'f':
+                    e.preventDefault();
+                    this.toggleFullscreen();
+                    break;
+            }
+        }
+    }
+
+    async undoLastMove() {
+        if (!this.state.gameStarted || this.state.currentPlayer !== 0) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/undo_move', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    gameId: this.state.gameId
+                })
+            });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.updateGameState(data.gameState);
+                this.ui.undoLastMove();
+            }
+        } catch (error) {
+            console.error('Failed to undo move:', error);
+            this.ui.showError('Failed to undo move');
+        }
+    }
+
+    async saveGame() {
+        try {
+            const response = await fetch('/api/save_game', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    gameState: this.state
+                })
+            });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.ui.showMessage('Game saved successfully');
+            } else {
+                throw new Error(data.error || 'Failed to save game');
+            }
+        } catch (error) {
+            console.error('Failed to save game:', error);
+            this.ui.showError('Failed to save game');
+        }
+    }
+
+    toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                this.ui.showError('Error attempting to enable fullscreen');
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+
+    handleWindowResize() {
+        this.ui.updateLayout();
+    }
+
+    handleOnlineStatus(isOnline) {
+        if (isOnline) {
+            this.ui.hideOfflineIndicator();
+            if (this.state.gameStarted) {
+                this.syncGameState();
+            }
+        } else {
+            this.ui.showOfflineIndicator();
+        }
+    }
+
+    handleInitializationError(error) {
+        console.error('Initialization error:', error);
+        this.ui.showError('Failed to initialize game');
+    }
+
+    isValidCard(card) {
+        return card && 
+               typeof card.rank === 'string' && 
+               typeof card.suit === 'string' &&
+               !this.state.removedCards.has(`${card.rank}${card.suit}`);
+    }
+
+    isValidPosition(position) {
+        return typeof position === 'number' && 
+               position >= 0 && 
+               position < 13;
+    }
 }
+
+// Экспорт класса
+export default Game;
