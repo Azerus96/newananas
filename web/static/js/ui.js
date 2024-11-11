@@ -1,5 +1,3 @@
-// web/static/js/ui.js
-
 class GameUI {
     constructor(game) {
         this.game = game;
@@ -9,6 +7,7 @@ class GameUI {
         this.animationEnabled = true;
         this.touchStartX = null;
         this.touchStartY = null;
+        this.eventListeners = new Map();
         
         // Инициализация после загрузки DOM
         if (document.readyState === 'loading') {
@@ -18,9 +17,9 @@ class GameUI {
         }
     }
 
-    init() {
+    async init() {
         try {
-            this.initializeElements();
+            await this.initializeElements();
             this.setupEventListeners();
             this.loadSettings();
             this.setupResponsiveUI();
@@ -29,35 +28,86 @@ class GameUI {
             if (this.isMobile) {
                 this.initializeMobileUI();
             }
+
+            // Инициализация анимаций
+            this.setupAnimations();
+            
+            // Инициализация доступности
+            this.setupAccessibility();
         } catch (error) {
             console.error('UI initialization failed:', error);
             this.showError('Failed to initialize game interface');
         }
     }
 
-    initializeElements() {
-        this.elements = {
-            mainMenu: document.getElementById('mainMenu'),
-            gameContainer: document.getElementById('gameContainer'),
-            playersContainer: document.getElementById('playersContainer'),
-            playerHand: document.getElementById('playerHand'),
-            removedCards: document.getElementById('removedCards'),
-            moveHistory: document.getElementById('moveHistory'),
-            gameStatus: document.getElementById('currentTurn'),
-            gameTimer: document.getElementById('gameTimer'),
-            cardSlots: document.getElementById('cardSlots'),
-            trainingControls: document.getElementById('trainingControls'),
-            sidePanel: document.getElementById('sidePanel'),
-            menuButton: document.getElementById('menuButton'),
-            themeToggle: document.getElementById('themeToggle'),
-            startGame: document.getElementById('startGame'),
-            aiThinkTime: document.getElementById('aiThinkTime'),
-            fantasyType: document.getElementById('fantasyType'),
-            soundToggle: document.getElementById('soundToggle'),
-            animationControl: document.getElementById('animationControl')
-        };
+    async initializeElements() {
+        // Создаем промис для каждого критического элемента
+        const elementPromises = [
+            this.waitForElement('mainMenu'),
+            this.waitForElement('gameContainer'),
+            this.waitForElement('playersContainer')
+        ];
 
-        // Проверка обязательных элементов
+        try {
+            const [mainMenu, gameContainer, playersContainer] = await Promise.all(elementPromises);
+            
+            this.elements = {
+                mainMenu,
+                gameContainer,
+                playersContainer,
+                playerHand: document.getElementById('playerHand'),
+                removedCards: document.getElementById('removedCards'),
+                moveHistory: document.getElementById('moveHistory'),
+                gameStatus: document.getElementById('currentTurn'),
+                gameTimer: document.getElementById('gameTimer'),
+                cardSlots: document.getElementById('cardSlots'),
+                trainingControls: document.getElementById('trainingControls'),
+                sidePanel: document.getElementById('sidePanel'),
+                menuButton: document.getElementById('menuButton'),
+                themeToggle: document.getElementById('themeToggle'),
+                startGame: document.getElementById('startGame'),
+                aiThinkTime: document.getElementById('aiThinkTime'),
+                fantasyType: document.getElementById('fantasyType'),
+                soundToggle: document.getElementById('soundToggle'),
+                animationControl: document.getElementById('animationControl')
+            };
+
+            // Проверяем наличие всех необходимых элементов
+            this.validateElements();
+        } catch (error) {
+            throw new Error(`Failed to initialize UI elements: ${error.message}`);
+        }
+    }
+
+    waitForElement(id) {
+        return new Promise((resolve, reject) => {
+            const element = document.getElementById(id);
+            if (element) {
+                resolve(element);
+            } else {
+                const observer = new MutationObserver((mutations, obs) => {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        obs.disconnect();
+                        resolve(element);
+                    }
+                });
+
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+
+                // Таймаут на случай, если элемент не появится
+                setTimeout(() => {
+                    observer.disconnect();
+                    reject(new Error(`Element ${id} not found`));
+                }, 5000);
+            }
+        });
+    }
+
+    validateElements() {
         const requiredElements = ['mainMenu', 'gameContainer', 'playersContainer'];
         const missingElements = requiredElements.filter(id => !this.elements[id]);
         
@@ -67,160 +117,250 @@ class GameUI {
     }
 
     setupEventListeners() {
-        // Основные элементы управления
-        this.elements.menuButton?.addEventListener('click', () => this.toggleMenu());
-        this.elements.themeToggle?.addEventListener('click', () => this.toggleTheme());
-        this.elements.startGame?.addEventListener('click', () => this.game.startGame());
+        // Используем Map для хранения привязанных обработчиков
+        this.addEventHandler(this.elements.menuButton, 'click', () => this.toggleMenu());
+        this.addEventHandler(this.elements.themeToggle, 'click', () => this.toggleTheme());
+        this.addEventHandler(this.elements.startGame, 'click', () => this.game.startGame());
         
         // Настройки
-        this.elements.aiThinkTime?.addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            if (!isNaN(value)) {
-                this.game.setAIThinkTime(value);
-                document.getElementById('thinkTimeValue').textContent = `${value}s`;
-            }
-        });
-
-        this.elements.fantasyType?.addEventListener('change', (e) => {
-            this.game.setFantasyMode(e.target.value);
-        });
-
-        this.elements.soundToggle?.addEventListener('change', (e) => {
-            this.toggleSound(e.target.checked);
-        });
-
-        this.elements.animationControl?.addEventListener('change', (e) => {
-            this.setAnimationState(e.target.value);
-        });
-
+        this.setupSettingsListeners();
+        
         // Обработка изменения размера окна
-        window.addEventListener('resize', this.debounce(() => {
-            this.updateResponsiveLayout();
-        }, 250));
+        this.addEventHandler(window, 'resize', 
+            this.debounce(() => this.updateResponsiveLayout(), 250)
+        );
 
         // Обработка клавиатуры
-        document.addEventListener('keydown', (e) => this.handleKeyboardInput(e));
+        this.addEventHandler(document, 'keydown', 
+            (e) => this.handleKeyboardInput(e)
+        );
+
+        // Обработка событий перетаскивания
+        this.setupDragAndDropListeners();
     }
 
-            // Утилиты
-    debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
+    addEventHandler(element, event, handler) {
+        if (!element) return;
+
+        const boundHandler = handler.bind(this);
+        element.addEventListener(event, boundHandler);
+        
+        // Сохраняем привязку для возможности удаления
+        if (!this.eventListeners.has(element)) {
+            this.eventListeners.set(element, new Map());
+        }
+        this.eventListeners.get(element).set(event, boundHandler);
     }
 
-    // Настройка мобильного интерфейса
-    initializeMobileUI() {
-        this.setupTouchEvents();
-        this.createMobileMenu();
-        this.adjustLayoutForMobile();
+    removeEventHandler(element, event) {
+        if (!element || !this.eventListeners.has(element)) return;
+
+        const handlers = this.eventListeners.get(element);
+        const handler = handlers.get(event);
+        
+        if (handler) {
+            element.removeEventListener(event, handler);
+            handlers.delete(event);
+        }
+
+        if (handlers.size === 0) {
+            this.eventListeners.delete(element);
+        }
     }
 
-    setupTouchEvents() {
-        document.addEventListener('touchstart', (e) => {
-            this.touchStartX = e.touches[0].clientX;
-            this.touchStartY = e.touches[0].clientY;
-        }, { passive: true });
-
-        document.addEventListener('touchmove', (e) => {
-            if (!this.touchStartX || !this.touchStartY) return;
-
-            const xDiff = this.touchStartX - e.touches[0].clientX;
-            const yDiff = this.touchStartY - e.touches[0].clientY;
-
-            if (Math.abs(xDiff) > Math.abs(yDiff)) {
-                if (xDiff > 50) { // Свайп влево
-                    this.openSidePanel();
-                } else if (xDiff < -50) { // Свайп вправо
-                    this.closeSidePanel();
+    setupSettingsListeners() {
+        if (this.elements.aiThinkTime) {
+            this.addEventHandler(this.elements.aiThinkTime, 'input', (e) => {
+                const value = parseInt(e.target.value);
+                if (!isNaN(value)) {
+                    this.game.setAIThinkTime(value);
+                    document.getElementById('thinkTimeValue').textContent = `${value}s`;
                 }
-            }
-        }, { passive: true });
+            });
+        }
 
-        document.addEventListener('touchend', () => {
-            this.touchStartX = null;
-            this.touchStartY = null;
-        }, { passive: true });
+        if (this.elements.fantasyType) {
+            this.addEventHandler(this.elements.fantasyType, 'change', (e) => {
+                this.game.setFantasyMode(e.target.value);
+            });
+        }
+
+        if (this.elements.soundToggle) {
+            this.addEventHandler(this.elements.soundToggle, 'change', (e) => {
+                this.toggleSound(e.target.checked);
+            });
+        }
+
+        if (this.elements.animationControl) {
+            this.addEventHandler(this.elements.animationControl, 'change', (e) => {
+                this.setAnimationState(e.target.value);
+            });
+        }
     }
 
-    createMobileMenu() {
-        if (document.getElementById('mobileMenu')) return;
-
-        const menuHTML = `
-            <div id="mobileMenu" class="mobile-menu">
-                <div class="mobile-menu-header">
-                    <h3>Меню</h3>
-                    <button class="close-menu" aria-label="Закрыть меню">×</button>
-                </div>
-                <div class="mobile-menu-content">
-                    <button class="menu-item" data-action="newGame">
-                        <i class="fas fa-play"></i> Новая игра
-                    </button>
-                    <button class="menu-item" data-action="statistics">
-                        <i class="fas fa-chart-bar"></i> Статистика
-                    </button>
-                    <button class="menu-item" data-action="settings">
-                        <i class="fas fa-cog"></i> Настройки
-                    </button>
-                    <button class="menu-item" data-action="tutorial">
-                        <i class="fas fa-question-circle"></i> Обучение
-                    </button>
-                    <button class="menu-item" data-action="returnToMenu">
-                        <i class="fas fa-home"></i> В главное меню
-                    </button>
-                </div>
-            </div>
-        `;
-
-        document.body.insertAdjacentHTML('beforeend', menuHTML);
-        this.setupMobileMenuListeners();
+    setupDragAndDropListeners() {
+        if (this.isMobile) {
+            this.setupTouchDragAndDrop();
+        } else {
+            this.setupMouseDragAndDrop();
+        }
     }
 
-    setupMobileMenuListeners() {
-        const menu = document.getElementById('mobileMenu');
-        if (!menu) return;
-
-        menu.querySelector('.close-menu').addEventListener('click', () => {
-            this.closeMobileMenu();
+    setupMouseDragAndDrop() {
+        this.addEventHandler(document, 'dragstart', (e) => {
+            if (!e.target.classList.contains('card')) return;
+            
+            this.draggedCard = e.target;
+            e.target.classList.add('dragging');
+            e.dataTransfer.setData('text/plain', '');
+            this.highlightValidDropZones(this.draggedCard);
         });
 
-        menu.querySelectorAll('.menu-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                const action = e.target.closest('.menu-item').dataset.action;
-                this.handleMobileMenuAction(action);
+        this.addEventHandler(document, 'dragend', (e) => {
+            if (!e.target.classList.contains('card')) return;
+            e.target.classList.remove('dragging');
+            this.clearHighlightedDropZones();
+            this.draggedCard = null;
+        });
+
+        // Настройка зон для дропа
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            this.addEventHandler(slot, 'dragover', (e) => {
+                if (!this.isValidDropTarget(slot)) return;
+                
+                e.preventDefault();
+                slot.classList.add('droppable');
+            });
+
+            this.addEventHandler(slot, 'dragleave', () => {
+                slot.classList.remove('droppable');
+            });
+
+            this.addEventHandler(slot, 'drop', (e) => {
+                e.preventDefault();
+                slot.classList.remove('droppable');
+                
+                if (this.draggedCard && this.isValidDropTarget(slot)) {
+                    this.handleCardDrop(this.draggedCard, slot);
+                }
             });
         });
     }
 
-    handleMobileMenuAction(action) {
-        this.closeMobileMenu();
-        
-        switch(action) {
-            case 'newGame':
-                this.game.startGame();
-                break;
-            case 'statistics':
-                this.showStatistics();
-                break;
-            case 'settings':
-                this.showSettings();
-                break;
-            case 'tutorial':
-                this.showTutorial();
-                break;
-            case 'returnToMenu':
-                this.confirmReturnToMenu();
-                break;
-        }
+    setupTouchDragAndDrop() {
+        let touchCard = null;
+        let initialX = 0;
+        let initialY = 0;
+        let moved = false;
+
+        this.addEventHandler(document, 'touchstart', (e) => {
+            if (!e.target.classList.contains('card')) return;
+            
+            touchCard = e.target;
+            moved = false;
+            const touch = e.touches[0];
+            initialX = touch.clientX - touchCard.offsetLeft;
+            initialY = touch.clientY - touchCard.offsetTop;
+            touchCard.classList.add('dragging');
+        }, { passive: false });
+
+        this.addEventHandler(document, 'touchmove', (e) => {
+            if (!touchCard) return;
+            
+            e.preventDefault();
+            moved = true;
+            const touch = e.touches[0];
+            
+            touchCard.style.position = 'fixed';
+            touchCard.style.left = `${touch.clientX - initialX}px`;
+            touchCard.style.top = `${touch.clientY - initialY}px`;
+            
+            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
+            this.updateDropZoneHighlight(dropTarget);
+        }, { passive: false });
+
+        this.addEventHandler(document, 'touchend', (e) => {
+            if (!touchCard) return;
+            
+            const touch = e.changedTouches[0];
+            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
+            
+            if (!moved) {
+                this.handleCardTap(touchCard);
+            } else if (dropTarget && this.isValidDropTarget(dropTarget)) {
+                this.handleCardDrop(touchCard, dropTarget);
+            } else {
+                this.resetCardPosition(touchCard);
+            }
+            
+            touchCard.classList.remove('dragging');
+            this.clearHighlightedDropZones();
+            touchCard = null;
+        });
     }
 
-    adjustLayoutForMobile() {
+    setupAnimations() {
+        // Настройка CSS переменных для анимаций
+        document.documentElement.style.setProperty(
+            '--animation-duration', 
+            this.animationEnabled ? '0.3s' : '0s'
+        );
+
+        // Наблюдатель за изменениями для анимаций
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && 
+                    mutation.attributeName === 'class') {
+                    this.handleAnimationClass(mutation.target);
+                }
+            });
+        });
+
+        // Наблюдаем за изменениями классов у карт
+        document.querySelectorAll('.card').forEach(card => {
+            observer.observe(card, { attributes: true });
+        });
+    }
+
+    setupAccessibility() {
+        // Добавляем ARIA-атрибуты
+        this.elements.gameContainer.setAttribute('role', 'main');
+        this.elements.playerHand.setAttribute('role', 'region');
+        this.elements.playerHand.setAttribute('aria-label', 'Your cards');
+
+        // Добавляем поддержку клавиатурной навигации
+        this.setupKeyboardNavigation();
+
+        // Добавляем живые регионы для обновления состояния
+        this.elements.gameStatus.setAttribute('role', 'status');
+        this.elements.gameStatus.setAttribute('aria-live', 'polite');
+    }
+
+    setupKeyboardNavigation() {
+        const focusableElements = this.elements.gameContainer
+            .querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        
+        const firstFocusable = focusableElements[0];
+        const lastFocusable = focusableElements[focusableElements.length - 1];
+
+        this.addEventHandler(this.elements.gameContainer, 'keydown', (e) => {
+            if (e.key === 'Tab') {
+                if (e.shiftKey) {
+                    if (document.activeElement === firstFocusable) {
+                        e.preventDefault();
+                        lastFocusable.focus();
+                    }
+                } else {
+                    if (document.activeElement === lastFocusable) {
+                        e.preventDefault();
+                        firstFocusable.focus();
+                    }
+                }
+            }
+        });
+    }
+
+    updateLayout() {
         const isLandscape = window.innerWidth > window.innerHeight;
         document.body.classList.toggle('landscape', isLandscape);
         
@@ -241,306 +381,256 @@ class GameUI {
         document.documentElement.style.setProperty('--card-height', cardHeight);
     }
 
-// Управление интерфейсом
-    setupDragAndDrop() {
-        if (this.isMobile) {
-            this.setupTouchDragAndDrop();
-        } else {
-            this.setupMouseDragAndDrop();
+    updateControlsLayout(isLandscape) {
+        if (this.elements.sidePanel) {
+            this.elements.sidePanel.classList.toggle('landscape', isLandscape);
+        }
+
+        if (this.elements.trainingControls) {
+            this.elements.trainingControls.classList.toggle('landscape', isLandscape);
         }
     }
 
-    setupMouseDragAndDrop() {
-        document.addEventListener('dragstart', (e) => {
-            if (!e.target.classList.contains('card')) return;
-            
-            this.draggedCard = e.target;
-            e.target.classList.add('dragging');
-            e.dataTransfer.setData('text/plain', '');
-            this.highlightValidDropZones(this.draggedCard);
-        });
-
-        document.addEventListener('dragend', (e) => {
-            if (!e.target.classList.contains('card')) return;
-            
-            e.target.classList.remove('dragging');
-            this.clearHighlightedDropZones();
-            this.draggedCard = null;
-        });
-
-        this.setupDropZones();
-    }
-
-    setupDropZones() {
-        document.querySelectorAll('.card-slot').forEach(slot => {
-            slot.addEventListener('dragover', (e) => {
-                if (!this.isValidDropTarget(slot)) return;
-                
-                e.preventDefault();
-                slot.classList.add('droppable');
-            });
-
-            slot.addEventListener('dragleave', (e) => {
-                slot.classList.remove('droppable');
-            });
-
-            slot.addEventListener('drop', (e) => {
-                e.preventDefault();
-                slot.classList.remove('droppable');
-                
-                if (this.draggedCard && this.isValidDropTarget(slot)) {
-                    this.handleCardDrop(this.draggedCard, slot);
-                }
-            });
-        });
-    }
-
-    setupTouchDragAndDrop() {
-        let touchCard = null;
-        let initialX = 0;
-        let initialY = 0;
-        let moved = false;
-
-        document.addEventListener('touchstart', (e) => {
-            if (!e.target.classList.contains('card')) return;
-            
-            touchCard = e.target;
-            moved = false;
-            const touch = e.touches[0];
-            initialX = touch.clientX - touchCard.offsetLeft;
-            initialY = touch.clientY - touchCard.offsetTop;
-            touchCard.classList.add('dragging');
-        }, { passive: false });
-
-        document.addEventListener('touchmove', (e) => {
-            if (!touchCard) return;
-            
-            e.preventDefault();
-            moved = true;
-            const touch = e.touches[0];
-            
-            touchCard.style.position = 'fixed';
-            touchCard.style.left = `${touch.clientX - initialX}px`;
-            touchCard.style.top = `${touch.clientY - initialY}px`;
-            
-            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
-            this.updateDropZoneHighlight(dropTarget);
-        }, { passive: false });
-
-        document.addEventListener('touchend', (e) => {
-            if (!touchCard) return;
-            
-            const touch = e.changedTouches[0];
-            const dropTarget = this.findDropTargetAtPoint(touch.clientX, touch.clientY);
-            
-            if (!moved) {
-                this.handleCardTap(touchCard);
-            } else if (dropTarget && this.isValidDropTarget(dropTarget)) {
-                this.handleCardDrop(touchCard, dropTarget);
-            } else {
-                this.resetCardPosition(touchCard);
-            }
-            
-            touchCard.classList.remove('dragging');
-            this.clearHighlightedDropZones();
-            touchCard = null;
-        });
-    }
-
-    findDropTargetAtPoint(x, y) {
-        const elements = document.elementsFromPoint(x, y);
-        return elements.find(el => el.classList.contains('card-slot'));
-    }
-
-    updateDropZoneHighlight(target) {
-        this.clearHighlightedDropZones();
-        if (target && this.isValidDropTarget(target)) {
-            target.classList.add('droppable');
-        }
-    }
-
-    handleCardTap(card) {
-        if (this.selectedCard === card) {
-            this.deselectCard();
-        } else {
-            this.selectCard(card);
-        }
-    }
-
-    selectCard(card) {
-        if (this.selectedCard) {
-            this.selectedCard.classList.remove('selected');
-        }
-        this.selectedCard = card;
-        card.classList.add('selected');
-        this.highlightValidDropZones(card);
-    }
-
-    deselectCard() {
-        if (this.selectedCard) {
-            this.selectedCard.classList.remove('selected');
-            this.selectedCard = null;
-            this.clearHighlightedDropZones();
-        }
-    }
-
-    highlightValidDropZones(card) {
-        document.querySelectorAll('.card-slot').forEach(slot => {
-            if (this.isValidDropTarget(slot)) {
-                slot.classList.add('valid-target');
-            }
-        });
-    }
-
-    clearHighlightedDropZones() {
-        document.querySelectorAll('.card-slot').forEach(slot => {
-            slot.classList.remove('droppable', 'valid-target');
-        });
-    }
-
-// Управление состоянием игры и UI
-    handleCardDrop(card, slot) {
-        if (!this.isValidDropTarget(slot)) return;
-
-        const cardData = this.getCardData(card);
-        const position = parseInt(slot.dataset.position);
-
-        if (this.animationEnabled) {
-            this.animateCardPlacement(card, slot, () => {
-                this.game.makeMove(cardData, position);
-            });
-        } else {
-            this.game.makeMove(cardData, position);
-        }
-    }
-
-    animateCardPlacement(card, slot, callback) {
+    handleAnimationClass(element) {
         if (!this.animationEnabled) {
-            callback();
+            element.style.transition = 'none';
             return;
         }
 
-        const cardRect = card.getBoundingClientRect();
-        const slotRect = slot.getBoundingClientRect();
-        const deltaX = slotRect.left - cardRect.left;
-        const deltaY = slotRect.top - cardRect.top;
-
-        card.style.transition = 'transform 0.3s ease-out';
-        card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-
-        const handleTransitionEnd = () => {
-            card.style.transition = '';
-            card.style.transform = '';
-            card.removeEventListener('transitionend', handleTransitionEnd);
-            callback();
-        };
-
-        card.addEventListener('transitionend', handleTransitionEnd, { once: true });
-    }
-
-    updateGameState(state) {
-        try {
-            this.updateGameStatus(state);
-            this.updatePlayerHand(state.playerCards);
-            this.updateBoards(state);
-            this.updateRemovedCards(state.removedCards);
-            this.updateMoveHistory(state.lastMove);
-            this.updateFantasyStatus(state.fantasyStatus);
-            this.updateStatistics(state);
-            this.updateSidePanel(state);
-        } catch (error) {
-            console.error('Failed to update game state:', error);
-            this.showError('Failed to update game state');
+        if (element.classList.contains('card-moving')) {
+            element.addEventListener('transitionend', () => {
+                element.classList.remove('card-moving');
+            }, { once: true });
         }
     }
 
-    updateGameStatus(state) {
-        if (!this.elements.gameStatus) return;
-
-        const statusText = state.currentPlayer === 0 
-            ? 'Ваш ход' 
-            : `Ход ${this.getPlayerName(state.currentPlayer)}`;
-        
-        this.elements.gameStatus.textContent = statusText;
-
-        if (state.currentPlayer === 0) {
-            this.startTimer();
-        } else {
-            this.stopTimer();
+    async animateMove(move) {
+        if (!this.animationEnabled) {
+            this.applyMove(move);
+            return;
         }
+
+        const card = this.findCard(move.card);
+        const targetSlot = this.findSlot(move.position);
+
+        if (!card || !targetSlot) {
+            console.error('Animation failed: card or slot not found');
+            this.applyMove(move);
+            return;
+        }
+
+        await this.animateCardMovement(card, targetSlot);
+        this.applyMove(move);
     }
 
-    updatePlayerHand(cards) {
-        if (!this.elements.playerHand) return;
+    async animateCardMovement(card, targetSlot) {
+        return new Promise(resolve => {
+            const cardRect = card.getBoundingClientRect();
+            const targetRect = targetSlot.getBoundingClientRect();
 
-        this.elements.playerHand.innerHTML = '';
-        cards.forEach(card => {
-            const cardElement = this.createCardElement(card);
-            this.elements.playerHand.appendChild(cardElement);
+            const translateX = targetRect.left - cardRect.left;
+            const translateY = targetRect.top - cardRect.top;
+
+            card.style.transition = 'transform 0.3s ease-out';
+            card.style.transform = `translate(${translateX}px, ${translateY}px)`;
+
+            card.addEventListener('transitionend', () => {
+                card.style.transition = '';
+                card.style.transform = '';
+                resolve();
+            }, { once: true });
         });
     }
 
-    updateBoards(state) {
-        if (!this.elements.playersContainer) return;
+    applyMove(move) {
+        const card = this.findCard(move.card);
+        const slot = this.findSlot(move.position);
 
-        // Очищаем контейнер
-        this.elements.playersContainer.innerHTML = '';
-        
-        // Создаем доски для каждого игрока
-        state.players.forEach((player, index) => {
-            const board = this.createPlayerBoard(player, index);
-            this.elements.playersContainer.appendChild(board);
-        });
-
-        // Обновляем layout
-        this.elements.playersContainer.setAttribute('data-players', state.players.length);
-    }
-
-    createPlayerBoard(player, index) {
-        const template = document.getElementById('playerBoardTemplate');
-        if (!template) {
-            console.error('Player board template not found');
-            return document.createElement('div');
-        }
-
-        const board = template.content.cloneNode(true).firstElementChild;
-        
-        // Заполняем информацию об игроке
-        board.querySelector('.player-name').textContent = this.getPlayerName(index);
-        board.querySelector('.player-score').textContent = player.score;
-        
-        // Заполняем карты на доске
-        this.fillPlayerBoard(board, player.cards);
-        
-        return board;
-    }
-
-    fillPlayerBoard(board, cards) {
-        cards.forEach((card, position) => {
-            if (!card) return;
-            
-            const slot = board.querySelector(`[data-position="${position}"]`);
-            if (!slot) return;
-
-            const cardElement = this.createCardElement(card);
-            slot.appendChild(cardElement);
+        if (card && slot) {
+            slot.appendChild(card);
             slot.classList.add('occupied');
+            this.updateGameState();
+        }
+    }
+
+    updateGameState() {
+        // Обновляем отображение статистики
+        this.updateStatistics();
+        
+        // Обновляем историю ходов
+        this.updateMoveHistory();
+        
+        // Обновляем состояние фантазии
+        this.updateFantasyStatus();
+        
+        // Обновляем индикаторы прогресса
+        this.updateProgressIndicators();
+    }
+
+    updateStatistics() {
+        const stats = this.game.getStatistics();
+        Object.entries(stats).forEach(([key, value]) => {
+            const element = document.getElementById(key);
+            if (element) {
+                element.textContent = value;
+                this.animateStatUpdate(element);
+            }
         });
     }
 
-    createCardElement(card) {
-        const element = document.createElement('div');
-        element.className = `card ${card.color}`;
-        element.draggable = true;
-        element.dataset.rank = card.rank;
-        element.dataset.suit = card.suit;
+    animateStatUpdate(element) {
+        if (!this.animationEnabled) return;
 
-        element.innerHTML = `
-            <span class="card-rank">${card.rank}</span>
-            <span class="card-suit">${this.getSuitSymbol(card.suit)}</span>
+        element.classList.add('updated');
+        setTimeout(() => element.classList.remove('updated'), 300);
+    }
+
+    updateMoveHistory(move) {
+        if (!this.elements.moveHistory || !move) return;
+
+        const moveElement = document.createElement('div');
+        moveElement.className = 'move-item';
+        moveElement.innerHTML = `
+            <span class="move-player">${this.getPlayerName(move.player)}</span>
+            <span class="move-card">${this.formatCard(move.card)}</span>
+            <span class="move-position">Position: ${move.position}</span>
         `;
 
-        return element;
+        this.elements.moveHistory.insertBefore(moveElement, this.elements.moveHistory.firstChild);
+        this.trimMoveHistory();
+    }
+
+    updateFantasyStatus(status) {
+        if (!this.elements.fantasyStatus) return;
+
+        const statusText = status.active ? 
+            `Fantasy active (${status.cardsCount} cards)` : 
+            'Fantasy inactive';
+
+        this.elements.fantasyStatus.textContent = statusText;
+        this.elements.fantasyStatus.classList.toggle('active', status.active);
+
+        if (status.progressiveBonus) {
+            this.elements.fantasyStatus.setAttribute(
+                'data-bonus',
+                `Progressive bonus: ${status.progressiveBonus}`
+            );
+        }
+    }
+
+    updateProgressIndicators() {
+        const progress = this.game.getProgress();
+        
+        // Обновляем индикатор прогресса игры
+        if (this.elements.gameProgress) {
+            this.elements.gameProgress.style.width = `${progress.game}%`;
+        }
+
+        // Обновляем индикатор времени хода
+        if (this.elements.turnProgress) {
+            this.elements.turnProgress.style.width = `${progress.turn}%`;
+        }
+    }
+
+    showError(message, duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = 'error-toast';
+        toast.setAttribute('role', 'alert');
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.add('fade-out');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        });
+    }
+
+    showMessage(message, type = 'info', duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.setAttribute('role', 'status');
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.add('fade-out');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        });
+    }
+
+    showGameOver(result) {
+        const modal = document.createElement('div');
+        modal.className = 'game-over-modal';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        
+        modal.innerHTML = `
+            <div class="game-over-content">
+                <h2>Game Over</h2>
+                <div class="game-results">
+                    <h3>${result.winner === 0 ? 'You won!' : `${this.getPlayerName(result.winner)} won!`}</h3>
+                    <div class="results-details">
+                        <p>Your score: ${result.playerScore}</p>
+                        ${result.aiScores.map((score, i) => 
+                            `<p>${this.getPlayerName(i + 1)} score: ${score}</p>`
+                        ).join('')}
+                        <p>Royalties: ${result.royalties}</p>
+                        <p>Fouls: ${((result.fouls / result.totalMoves) * 100).toFixed(1)}%</p>
+                        <p>Scoops: ${((result.scoops / result.totalMoves) * 100).toFixed(1)}%</p>
+                        ${result.fantasyAchieved ? '<p class="fantasy-achieved">Fantasy achieved!</p>' : ''}
+                    </div>
+                </div>
+                <div class="game-over-buttons">
+                    <button class="new-game">New Game</button>
+                    <button class="return-menu">Return to Menu</button>
+                </div>
+            </div>
+        `;
+
+        this.setupGameOverListeners(modal);
+        document.body.appendChild(modal);
+
+        // Анимация появления
+        requestAnimationFrame(() => modal.classList.add('show'));
+    }
+
+    setupGameOverListeners(modal) {
+        modal.querySelector('.new-game').addEventListener('click', () => {
+            modal.classList.remove('show');
+            setTimeout(() => {
+                modal.remove();
+                this.game.startGame();
+            }, 300);
+        });
+
+        modal.querySelector('.return-menu').addEventListener('click', () => {
+            modal.classList.remove('show');
+            setTimeout(() => {
+                modal.remove();
+                this.game.returnToMenu();
+            }, 300);
+        });
+    }
+
+    // Утилиты
+    getPlayerName(player) {
+        return player === 0 ? 'You' : 
+            this.game.state.agents[player - 1]?.name.replace('Agent', 'AI ') || 
+            `Player ${player}`;
+    }
+
+    formatCard(card) {
+        return `${card.rank}${this.getSuitSymbol(card.suit)}`;
     }
 
     getSuitSymbol(suit) {
@@ -553,183 +643,50 @@ class GameUI {
         return symbols[suit] || suit;
     }
 
-// Обновление UI элементов и обработка взаимодействий
-    updateRemovedCards(cards) {
-        if (!this.elements.removedCards) return;
-
-        this.elements.removedCards.innerHTML = '';
-        cards.forEach(card => {
-            const cardElement = this.createCardElement(card);
-            cardElement.draggable = false; // Убираем возможность перетаскивания
-            this.elements.removedCards.appendChild(cardElement);
-        });
+    findCard(cardData) {
+        return document.querySelector(
+            `.card[data-rank="${cardData.rank}"][data-suit="${cardData.suit}"]`
+        );
     }
 
-    updateMoveHistory(move) {
-        if (!this.elements.moveHistory || !move) return;
-
-        const moveElement = document.createElement('div');
-        moveElement.className = 'move-item';
-        moveElement.innerHTML = `
-            <span class="move-player">${this.getPlayerName(move.player)}</span>
-            <span class="move-card">${move.card.rank}${this.getSuitSymbol(move.card.suit)}</span>
-            <span class="move-position">Position: ${move.position}</span>
-        `;
-
-        this.elements.moveHistory.insertBefore(moveElement, this.elements.moveHistory.firstChild);
-        this.trimMoveHistory();
+    findSlot(position) {
+        return document.querySelector(`.card-slot[data-position="${position}"]`);
     }
 
-    trimMoveHistory(maxMoves = 10) {
-        if (!this.elements.moveHistory) return;
-
-        while (this.elements.moveHistory.children.length > maxMoves) {
-            this.elements.moveHistory.removeChild(this.elements.moveHistory.lastChild);
-        }
-    }
-
-    updateFantasyStatus(status) {
-        if (!this.elements.fantasyStatus) return;
-
-        const statusText = status.active ? 
-            `Фантазия активна (${status.cardsCount} карт)` : 
-            'Фантазия неактивна';
-
-        this.elements.fantasyStatus.textContent = statusText;
-        this.elements.fantasyStatus.classList.toggle('active', status.active);
-
-        if (status.progressiveBonus) {
-            this.elements.fantasyStatus.setAttribute(
-                'data-bonus',
-                `Прогрессивный бонус: ${status.progressiveBonus}`
-            );
-        }
-    }
-
-    updateStatistics(state) {
-        const stats = {
-            foulsRate: state.fouls / state.totalMoves * 100 || 0,
-            scoopsRate: state.scoops / state.totalMoves * 100 || 0,
-            winRate: state.wins / state.gamesPlayed * 100 || 0
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
         };
+    }
 
-        Object.entries(stats).forEach(([key, value]) => {
-            const element = document.getElementById(key);
-            if (element) {
-                element.textContent = `${value.toFixed(1)}%`;
-                this.animateStatUpdate(element);
-            }
+    cleanup() {
+        // Удаляем все обработчики событий
+        this.eventListeners.forEach((handlers, element) => {
+            handlers.forEach((handler, event) => {
+                element.removeEventListener(event, handler);
+            });
         });
+        this.eventListeners.clear();
+
+        // Очищаем все интервалы и таймауты
+        if (this.updateInterval) {
+            clearInterval(this.updateInterval);
+        }
+
+        // Удаляем все модальные окна
+        document.querySelectorAll('.modal').forEach(modal => modal.remove());
+        
+        // Очищаем все уведомления
+        document.querySelectorAll('.toast').forEach(toast => toast.remove());
     }
 
-    animateStatUpdate(element) {
-        element.classList.add('updated');
-        setTimeout(() => element.classList.remove('updated'), 300);
-    }
-
-    showAIThinking(player, thinkTime = 30) {
-        const overlay = document.createElement('div');
-        overlay.className = 'thinking-overlay';
-        
-        overlay.innerHTML = `
-            <div class="thinking-content">
-                <div class="spinner"></div>
-                <p>${this.getPlayerName(player)} думает...</p>
-                ${this.animationEnabled ? `
-                    <div class="progress-bar">
-                        <div class="progress" style="animation-duration: ${thinkTime}s"></div>
-                    </div>
-                ` : ''}
-            </div>
-        `;
-        
-        document.body.appendChild(overlay);
-    }
-
-    hideAIThinking() {
-        const overlay = document.querySelector('.thinking-overlay');
-        if (!overlay) return;
-
-        overlay.classList.add('fade-out');
-        setTimeout(() => overlay.remove(), 300);
-    }
-
-    showGameOver(result) {
-        const modal = document.createElement('div');
-        modal.className = 'game-over-modal';
-        
-        modal.innerHTML = `
-            <div class="game-over-content">
-                <h2>Игра окончена</h2>
-                <div class="game-results">
-                    <h3>${result.winner === 0 ? 'Вы победили!' : `${this.getPlayerName(result.winner)} победил!`}</h3>
-                    <div class="results-details">
-                        <p>Ваш счёт: ${result.playerScore}</p>
-                        ${result.aiScores.map((score, i) => 
-                            `<p>${this.getPlayerName(i + 1)} счёт: ${score}</p>`
-                        ).join('')}
-                        <p>Роялти: ${result.royalties}</p>
-                        <p>Фолы: ${((result.fouls / result.totalMoves) * 100).toFixed(1)}%</p>
-                        <p>Скупы: ${((result.scoops / result.totalMoves) * 100).toFixed(1)}%</p>
-                        ${result.fantasyAchieved ? '<p class="fantasy-achieved">Фантазия достигнута!</p>' : ''}
-                    </div>
-                </div>
-                <div class="game-over-buttons">
-                    <button class="new-game">Новая игра</button>
-                    <button class="return-menu">Вернуться в меню</button>
-                </div>
-            </div>
-        `;
-
-        this.setupGameOverListeners(modal);
-        document.body.appendChild(modal);
-    }
-
-// Вспомогательные методы и обработчики
-    setupGameOverListeners(modal) {
-        modal.querySelector('.new-game').addEventListener('click', () => {
-            modal.remove();
-            this.game.startGame();
-        });
-
-        modal.querySelector('.return-menu').addEventListener('click', () => {
-            modal.remove();
-            this.game.returnToMenu();
-        });
-    }
-
-    showError(message, duration = 3000) {
-        const toast = document.createElement('div');
-        toast.className = 'error-toast';
-        toast.textContent = message;
-        
-        document.body.appendChild(toast);
-        
-        // Анимация появления
-        requestAnimationFrame(() => {
-            toast.classList.add('show');
-        });
-        
-        setTimeout(() => {
-            toast.classList.add('fade-out');
-            setTimeout(() => toast.remove(), 300);
-        }, duration);
-    }
-
-    showMessage(message, type = 'info', duration = 3000) {
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.textContent = message;
-        
-        document.body.appendChild(toast);
-        requestAnimationFrame(() => toast.classList.add('show'));
-        
-        setTimeout(() => {
-            toast.classList.add('fade-out');
-            setTimeout(() => toast.remove(), 300);
-        }, duration);
-    }
-
+    // Методы для работы с темой
     toggleTheme() {
         const currentTheme = document.body.getAttribute('data-theme') || 'light';
         const newTheme = currentTheme === 'light' ? 'dark' : 'light';
@@ -742,124 +699,162 @@ class GameUI {
         if (themeIcon) {
             themeIcon.className = `fas fa-${newTheme === 'light' ? 'sun' : 'moon'}`;
         }
+
+        // Вызываем событие изменения темы
+        this.dispatchThemeChange(newTheme);
     }
 
+    dispatchThemeChange(theme) {
+        const event = new CustomEvent('themechange', {
+            detail: { theme }
+        });
+        document.dispatchEvent(event);
+    }
+
+    // Методы для работы со звуком
     toggleSound(enabled) {
         document.body.classList.toggle('sound-enabled', enabled);
         localStorage.setItem('soundEnabled', enabled);
+        
+        if (enabled) {
+            this.initializeSoundSystem();
+        } else {
+            this.cleanupSoundSystem();
+        }
     }
 
+    initializeSoundSystem() {
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.loadSounds();
+        }
+    }
+
+    async loadSounds() {
+        this.sounds = new Map();
+        const soundFiles = {
+            cardPlace: 'sounds/card-place.mp3',
+            cardFlip: 'sounds/card-flip.mp3',
+            victory: 'sounds/victory.mp3',
+            error: 'sounds/error.mp3'
+        };
+
+        try {
+            for (const [name, file] of Object.entries(soundFiles)) {
+                const response = await fetch(file);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                this.sounds.set(name, audioBuffer);
+            }
+        } catch (error) {
+            console.error('Failed to load sounds:', error);
+        }
+    }
+
+    playSound(name) {
+        if (!this.audioContext || !this.sounds.has(name)) return;
+
+        const source = this.audioContext.createBufferSource();
+        source.buffer = this.sounds.get(name);
+        source.connect(this.audioContext.destination);
+        source.start(0);
+    }
+
+    cleanupSoundSystem() {
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+        this.sounds?.clear();
+    }
+
+    // Методы для работы с анимациями
     setAnimationState(value) {
         this.animationEnabled = value !== 'off';
         document.body.classList.toggle('animations-disabled', !this.animationEnabled);
         localStorage.setItem('animationState', value);
-    }
-
-    loadSettings() {
-        // Загрузка темы
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        document.body.setAttribute('data-theme', savedTheme);
-
-        // Загрузка настроек звука
-        const soundEnabled = localStorage.getItem('soundEnabled') !== 'false';
-        this.toggleSound(soundEnabled);
-
-        // Загрузка настроек анимации
-        const animationState = localStorage.getItem('animationState') || 'normal';
-        this.setAnimationState(animationState);
-
-        // Применяем настройки к элементам управления
-        if (this.elements.animationControl) {
-            this.elements.animationControl.value = animationState;
-        }
-        if (this.elements.soundToggle) {
-            this.elements.soundToggle.checked = soundEnabled;
-        }
-    }
-
-    handleKeyboardInput(e) {
-        // Отменяем обработку, если открыто модальное окно
-        if (document.querySelector('.modal.active')) return;
-
-        if (e.ctrlKey || e.metaKey) {
-            switch(e.key.toLowerCase()) {
-                case 'z':
-                    e.preventDefault();
-                    this.game.undoLastMove();
-                    break;
-                case 's':
-                    e.preventDefault();
-                    this.game.saveGame();
-                    break;
-                case 'f':
-                    e.preventDefault();
-                    this.toggleFullscreen();
-                    break;
-            }
-        } else if (e.key === 'Escape') {
-            this.handleEscapeKey();
-        }
-    }
-
-    handleEscapeKey() {
-        // Закрываем модальные окна в порядке приоритета
-        const modalElements = [
-            '.game-over-modal',
-            '.settings-modal',
-            '.mobile-menu.active',
-            '.side-panel.active'
-        ];
-
-        for (const selector of modalElements) {
-            const element = document.querySelector(selector);
-            if (element) {
-                if (selector.includes('mobile-menu')) {
-                    this.closeMobileMenu();
-                } else if (selector.includes('side-panel')) {
-                    this.closeSidePanel();
-                } else {
-                    element.remove();
-                }
-                return;
-            }
-        }
-    }
-
-    toggleFullscreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => {
-                this.showError('Error attempting to enable fullscreen');
-            });
-        } else {
-            document.exitFullscreen();
-        }
-    }
-
-    getPlayerName(player) {
-        return player === 0 ? 'Вы' : 
-            this.game.state.agents[player - 1]?.name.replace('Agent', 'AI ') || 
-            `Игрок ${player}`;
-    }
-
-    isValidDropTarget(slot) {
-        if (!slot || !this.draggedCard || slot.classList.contains('occupied')) {
-            return false;
-        }
-
-        const card = this.getCardData(this.draggedCard);
-        const position = parseInt(slot.dataset.position);
         
-        return this.game.isValidMove(card, position);
+        // Обновляем CSS переменные
+        document.documentElement.style.setProperty(
+            '--animation-duration',
+            this.animationEnabled ? '0.3s' : '0s'
+        );
     }
 
-    getCardData(cardElement) {
-        return {
-            rank: cardElement.dataset.rank,
-            suit: cardElement.dataset.suit,
-            color: cardElement.classList.contains('red') ? 'red' : 'black'
-        };
+    // Методы для работы с мобильной версией
+    initializeMobileUI() {
+        this.setupTouchEvents();
+        this.createMobileMenu();
+        this.adjustLayoutForMobile();
+
+        // Добавляем обработчики для жестов
+        this.setupGestureHandlers();
+    }
+
+    setupGestureHandlers() {
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchStartTime = 0;
+
+        this.addEventHandler(document, 'touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            touchStartTime = Date.now();
+        });
+
+        this.addEventHandler(document, 'touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            const touchEndTime = Date.now();
+
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+            const deltaTime = touchEndTime - touchStartTime;
+
+            // Определяем тип жеста
+            if (deltaTime < 300) { // Быстрый жест
+                if (Math.abs(deltaX) > 50 && Math.abs(deltaY) < 30) {
+                    // Горизонтальный свайп
+                    if (deltaX > 0) {
+                        this.handleSwipeRight();
+                    } else {
+                        this.handleSwipeLeft();
+                    }
+                }
+            }
+        });
+    }
+
+    handleSwipeRight() {
+        if (this.elements.sidePanel?.classList.contains('active')) {
+            this.closeSidePanel();
+        }
+    }
+
+    handleSwipeLeft() {
+        if (!this.elements.sidePanel?.classList.contains('active')) {
+            this.openSidePanel();
+        }
+    }
+
+    // Методы для работы с доступностью
+    announceGameState(message) {
+        const announcer = document.getElementById('gameAnnouncer') || 
+            this.createAnnouncer();
+        
+        announcer.textContent = message;
+    }
+
+    createAnnouncer() {
+        const announcer = document.createElement('div');
+        announcer.id = 'gameAnnouncer';
+        announcer.className = 'screen-reader-only';
+        announcer.setAttribute('role', 'status');
+        announcer.setAttribute('aria-live', 'polite');
+        document.body.appendChild(announcer);
+        return announcer;
     }
 }
 
-// Экспортируем класс
+// Экспорт класса
 export default GameUI;
