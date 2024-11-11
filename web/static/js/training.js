@@ -1,7 +1,12 @@
-// web/static/js/training.js
-
 class TrainingMode {
     constructor() {
+        // Проверка готовности DOM
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.initialize());
+        } else {
+            this.initialize();
+        }
+
         this.state = {
             active: false,
             currentPhase: null,
@@ -10,6 +15,7 @@ class TrainingMode {
             selectedRank: null,
             selectedSuit: null,
             selectedSlot: null,
+            history: [],
             statistics: {
                 movesAnalyzed: 0,
                 thinkTime: [],
@@ -17,7 +23,9 @@ class TrainingMode {
                 totalAttempts: 0,
                 fouls: 0,
                 scoops: 0,
-                totalMoves: 0
+                totalMoves: 0,
+                patterns: new Map(),
+                mistakes: []
             }
         };
 
@@ -25,414 +33,550 @@ class TrainingMode {
             fantasyMode: false,
             progressiveFantasy: false,
             thinkTime: 30,
-            animationEnabled: true
+            animationEnabled: true,
+            soundEnabled: true,
+            autoSave: true,
+            difficultyLevel: 'medium'
         };
 
-        this.initializeElements();
-        this.initializeEventListeners();
-        this.setupMobileSupport();
-        this.loadSettings();
+        this.eventHandlers = new Map();
+        this.animations = new Map();
+        this.sounds = new Map();
     }
 
-    initializeElements() {
+    async initialize() {
+        try {
+            await this.initializeElements();
+            this.setupEventListeners();
+            await this.loadSettings();
+            this.setupAnimations();
+            this.setupSoundSystem();
+            this.initializeAnalytics();
+            
+            if (this.config.autoSave) {
+                this.loadSavedState();
+            }
+        } catch (error) {
+            console.error('Training mode initialization failed:', error);
+            this.handleInitializationError(error);
+        }
+    }
+
+    async initializeElements() {
+        // Основные элементы управления
         this.elements = {
-            // Основные элементы
-            container: document.querySelector('.container'),
-            frontStreet: document.getElementById('frontStreet'),
-            middleStreet: document.getElementById('middleStreet'),
-            backStreet: document.getElementById('backStreet'),
-            inputCards: document.getElementById('inputCards'),
+            container: await this.waitForElement('container'),
+            frontStreet: await this.waitForElement('frontStreet'),
+            middleStreet: await this.waitForElement('middleStreet'),
+            backStreet: await this.waitForElement('backStreet'),
+            inputCards: await this.waitForElement('inputCards'),
             removedCards: {
-                row1: document.getElementById('removedCardsRow1'),
-                row2: document.getElementById('removedCardsRow2')
+                row1: await this.waitForElement('removedCardsRow1'),
+                row2: await this.waitForElement('removedCardsRow2')
             },
 
             // Контролы
-            fantasyMode: document.getElementById('fantasyMode'),
-            progressiveFantasy: document.getElementById('progressiveFantasy'),
-            thinkTime: document.getElementById('thinkTime'),
-            distributeButton: document.getElementById('distributeCards'),
-            clearButton: document.getElementById('clearSelection'),
-            startButton: document.getElementById('startTraining'),
-            resetButton: document.getElementById('resetBoard'),
-            animationControl: document.getElementById('animationControl'),
+            fantasyMode: await this.waitForElement('fantasyMode'),
+            progressiveFantasy: await this.waitForElement('progressiveFantasy'),
+            thinkTime: await this.waitForElement('thinkTime'),
+            distributeButton: await this.waitForElement('distributeCards'),
+            clearButton: await this.waitForElement('clearSelection'),
+            startButton: await this.waitForElement('startTraining'),
+            resetButton: await this.waitForElement('resetBoard'),
+            animationControl: await this.waitForElement('animationControl'),
 
             // Статистика
-            movesCount: document.getElementById('movesCount'),
-            avgThinkTime: document.getElementById('avgThinkTime'),
-            fantasyRate: document.getElementById('fantasyRate'),
-            foulsRate: document.getElementById('foulsRate'),
-            scoopsRate: document.getElementById('scoopsRate'),
+            movesCount: await this.waitForElement('movesCount'),
+            avgThinkTime: await this.waitForElement('avgThinkTime'),
+            fantasyRate: await this.waitForElement('fantasyRate'),
+            foulsRate: await this.waitForElement('foulsRate'),
+            scoopsRate: await this.waitForElement('scoopsRate'),
 
             // Выбор карт
             ranks: document.querySelectorAll('.rank'),
             suits: document.querySelectorAll('.suit')
         };
 
-        // Инициализация слотов для карт
-        this.initializeCardSlots();
-        
-        // Инициализация подсказок
-        this.initializeTooltips();
+        this.validateElements();
     }
 
-    initializeCardSlots() {
-        // Создаем слоты для карт в каждой секции
-        const createSlots = (container, count) => {
-            container.innerHTML = '';
-            for (let i = 0; i < count; i++) {
-                const slot = document.createElement('div');
-                slot.className = 'card-slot';
-                slot.dataset.index = i;
-                container.appendChild(slot);
-            }
-        };
-
-        // Инициализация всех слотов
-        createSlots(this.elements.frontStreet, 3);
-        createSlots(this.elements.middleStreet, 5);
-        createSlots(this.elements.backStreet, 5);
-        createSlots(this.elements.removedCards.row1, 15);
-        createSlots(this.elements.removedCards.row2, 15);
-        createSlots(this.elements.inputCards, 17); // Максимальное количество для фантазии
-    }
-
-    initializeTooltips() {
-        const tooltips = {
-            foulsRate: 'Процент нарушений правила старшинства комбинаций',
-            scoopsRate: 'Процент ситуаций, когда все три ряда выигрывают',
-            fantasyRate: 'Процент успешных фантазий'
-        };
-
-        Object.entries(tooltips).forEach(([id, text]) => {
+    waitForElement(id) {
+        return new Promise((resolve, reject) => {
             const element = document.getElementById(id);
             if (element) {
-                element.setAttribute('data-tooltip', text);
-                element.classList.add('has-tooltip');
+                resolve(element);
+                return;
             }
-        });
-    }
 
-    setupMobileSupport() {
-        this.isMobile = window.innerWidth <= 768;
-        if (this.isMobile) {
-            this.setupTouchInteractions();
-            this.adjustLayoutForMobile();
-        }
-
-        window.addEventListener('orientationchange', () => {
-            this.adjustLayoutForMobile();
-        });
-
-        window.addEventListener('resize', () => {
-            this.isMobile = window.innerWidth <= 768;
-            this.adjustLayoutForMobile();
-        });
-    }
-
-    setupTouchInteractions() {
-        let touchStartX, touchStartY;
-        let currentCard = null;
-
-        document.addEventListener('touchstart', (e) => {
-            if (e.target.classList.contains('card')) {
-                currentCard = e.target;
-                const touch = e.touches[0];
-                touchStartX = touch.clientX - currentCard.offsetLeft;
-                touchStartY = touch.clientY - currentCard.offsetTop;
-                currentCard.classList.add('dragging');
-            }
-        }, { passive: false });
-
-        document.addEventListener('touchmove', (e) => {
-            if (currentCard) {
-                e.preventDefault();
-                const touch = e.touches[0];
-                currentCard.style.position = 'fixed';
-                currentCard.style.left = `${touch.clientX - touchStartX}px`;
-                currentCard.style.top = `${touch.clientY - touchStartY}px`;
-                
-                // Подсветка возможных слотов
-                this.highlightValidSlots(currentCard);
-            }
-        }, { passive: false });
-
-        document.addEventListener('touchend', (e) => {
-            if (currentCard) {
-                const touch = e.changedTouches[0];
-                const slot = this.findSlotAtPosition(touch.clientX, touch.clientY);
-                
-                if (slot && this.isValidMove(currentCard, slot)) {
-                    this.moveCardToSlot(currentCard, slot);
-                } else {
-                    this.resetCardPosition(currentCard);
+            const observer = new MutationObserver((mutations, obs) => {
+                const element = document.getElementById(id);
+                if (element) {
+                    obs.disconnect();
+                    resolve(element);
                 }
-                
-                currentCard.classList.remove('dragging');
-                this.clearHighlightedSlots();
-                currentCard = null;
-            }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+
+            setTimeout(() => {
+                observer.disconnect();
+                reject(new Error(`Element ${id} not found`));
+            }, 5000);
         });
     }
 
-    adjustLayoutForMobile() {
-        const isLandscape = window.innerWidth > window.innerHeight;
-        document.body.classList.toggle('landscape', isLandscape);
+    validateElements() {
+        const requiredElements = [
+            'container', 'frontStreet', 'middleStreet', 'backStreet',
+            'inputCards', 'distributeButton', 'clearButton'
+        ];
 
-        if (isLandscape) {
-            this.elements.container.classList.add('landscape-layout');
-            this.adjustCardSizeForLandscape();
-        } else {
-            this.elements.container.classList.remove('landscape-layout');
-            this.adjustCardSizeForPortrait();
+        const missingElements = requiredElements.filter(id => !this.elements[id]);
+        
+        if (missingElements.length > 0) {
+            throw new Error(`Missing required elements: ${missingElements.join(', ')}`);
         }
     }
 
-    initializeEventListeners() {
+    setupEventListeners() {
         // Настройки
-        this.elements.fantasyMode.addEventListener('change', (e) => {
-            this.config.fantasyMode = e.target.checked;
-            this.updateInputCardsVisibility();
-        });
-
-        this.elements.progressiveFantasy.addEventListener('change', (e) => {
-            this.config.progressiveFantasy = e.target.checked;
-        });
-
-        this.elements.thinkTime.addEventListener('input', (e) => {
-            this.config.thinkTime = parseInt(e.target.value);
-        });
-
-        this.elements.animationControl.addEventListener('change', (e) => {
-            this.config.animationEnabled = e.target.value !== 'off';
-            document.body.classList.toggle('animations-disabled', !this.config.animationEnabled);
-        });
+        this.addEventHandler(this.elements.fantasyMode, 'change', 
+            e => this.handleFantasyModeChange(e));
+        this.addEventHandler(this.elements.progressiveFantasy, 'change', 
+            e => this.handleProgressiveFantasyChange(e));
+        this.addEventHandler(this.elements.thinkTime, 'input', 
+            e => this.handleThinkTimeChange(e));
 
         // Кнопки управления
-        this.elements.startButton.addEventListener('click', () => this.startTraining());
-        this.elements.resetButton.addEventListener('click', () => this.resetBoard());
-        this.elements.distributeButton.addEventListener('click', () => this.requestAIDistribution());
-    this.elements.clearButton.addEventListener('click', () => this.clearSelection());
+        this.addEventHandler(this.elements.startButton, 'click', 
+            () => this.startTraining());
+        this.addEventHandler(this.elements.resetButton, 'click', 
+            () => this.resetBoard());
+        this.addEventHandler(this.elements.distributeButton, 'click', 
+            () => this.requestAIDistribution());
+        this.addEventHandler(this.elements.clearButton, 'click', 
+            () => this.clearSelection());
 
-    // Выбор карт
-    this.elements.ranks.forEach(button => {
-        button.addEventListener('click', (e) => this.selectRank(e.target.dataset.rank));
-    });
-
-    this.elements.suits.forEach(button => {
-        button.addEventListener('click', (e) => this.selectSuit(e.target.dataset.suit));
-    });
-
-    // Слоты для карт
-    document.querySelectorAll('.card-slot').forEach(slot => {
-        slot.addEventListener('click', () => this.handleSlotClick(slot));
-    });
-
-    // Обработка клавиатуры
-    document.addEventListener('keydown', (e) => this.handleKeyboard(e));
-
-    // Отмена последнего действия
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-            e.preventDefault();
-            this.undoLastAction();
-        }
-    });
-}
-
-async startTraining() {
-    try {
-        const response = await fetch('/api/training/start', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(this.config)
+        // Выбор карт
+        this.elements.ranks.forEach(button => {
+            this.addEventHandler(button, 'click', 
+                e => this.selectRank(e.target.dataset.rank));
         });
 
-        const data = await response.json();
-        if (data.status === 'ok') {
-            this.state.active = true;
-            this.state.sessionId = data.session_id;
-            this.updateUI(data.initial_state);
-            this.showMessage('Тренировка начата');
-        } else {
-            throw new Error(data.message || 'Failed to start training');
-        }
-    } catch (error) {
-        console.error('Failed to start training:', error);
-        this.showError('Не удалось начать тренировку');
-    }
-}
-
-async requestAIDistribution() {
-    if (!this.validateInput()) {
-        this.showError('Разместите как минимум 2 входные карты');
-        return;
-    }
-
-    this.state.aiThinking = true;
-    this.showAIThinking();
-
-    try {
-        const response = await fetch('/api/training/distribute', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                input_cards: this.getInputCards(),
-                removed_cards: this.getRemovedCards(),
-                config: this.config
-            })
+        this.elements.suits.forEach(button => {
+            this.addEventHandler(button, 'click', 
+                e => this.selectSuit(e.target.dataset.suit));
         });
 
-        const result = await response.json();
-        if (result.status === 'ok') {
-            if (this.config.animationEnabled) {
-                await this.animateAIMove(result.move);
+        // Слоты для карт
+        document.querySelectorAll('.card-slot').forEach(slot => {
+            this.addEventHandler(slot, 'click', 
+                () => this.handleSlotClick(slot));
+        });
+
+        // Обработка клавиатуры
+        this.addEventHandler(document, 'keydown', 
+            e => this.handleKeyboard(e));
+
+        // Отмена последнего действия
+        this.addEventHandler(document, 'keydown', e => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault();
+                this.undoLastAction();
+            }
+        });
+    }
+
+    addEventHandler(element, event, handler) {
+        if (!element) return;
+
+        const boundHandler = handler.bind(this);
+        element.addEventListener(event, boundHandler);
+
+        if (!this.eventHandlers.has(element)) {
+            this.eventHandlers.set(element, new Map());
+        }
+        this.eventHandlers.get(element).set(event, boundHandler);
+    }
+
+    removeEventHandler(element, event) {
+        if (!this.eventHandlers.has(element)) return;
+
+        const handlers = this.eventHandlers.get(element);
+        const handler = handlers.get(event);
+        
+        if (handler) {
+            element.removeEventListener(event, handler);
+            handlers.delete(event);
+        }
+
+        if (handlers.size === 0) {
+            this.eventHandlers.delete(element);
+        }
+    }
+
+    async loadSettings() {
+        try {
+            const savedSettings = localStorage.getItem('trainingSettings');
+            if (savedSettings) {
+                const settings = JSON.parse(savedSettings);
+                this.config = { ...this.config, ...settings };
+            }
+
+            // Загружаем звуки если они включены
+            if (this.config.soundEnabled) {
+                await this.loadSounds();
+            }
+
+            this.applySettings();
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+            this.showError('Failed to load settings');
+        }
+    }
+
+    async loadSounds() {
+        const soundFiles = {
+            cardPlace: 'sounds/card-place.mp3',
+            cardFlip: 'sounds/card-flip.mp3',
+            success: 'sounds/success.mp3',
+            error: 'sounds/error.mp3',
+            fantasy: 'sounds/fantasy.mp3'
+        };
+
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            for (const [name, file] of Object.entries(soundFiles)) {
+                const response = await fetch(file);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                this.sounds.set(name, audioBuffer);
+            }
+        } catch (error) {
+            console.error('Failed to load sounds:', error);
+        }
+    }
+
+    setupAnimations() {
+        this.animations.set('cardPlace', {
+            keyframes: [
+                { transform: 'scale(1.1)', opacity: '0.8' },
+                { transform: 'scale(1)', opacity: '1' }
+            ],
+            options: { duration: 300, easing: 'ease-out' }
+        });
+
+        this.animations.set('cardRemove', {
+            keyframes: [
+                { transform: 'scale(1)', opacity: '1' },
+                { transform: 'scale(0.8)', opacity: '0' }
+            ],
+            options: { duration: 300, easing: 'ease-in' }
+        });
+
+        this.animations.set('highlight', {
+            keyframes: [
+                { backgroundColor: 'rgba(0, 123, 255, 0.2)' },
+                { backgroundColor: 'transparent' }
+            ],
+            options: { duration: 500, iterations: 2 }
+        });
+    }
+
+    initializeAnalytics() {
+        this.analytics = {
+            sessionStart: Date.now(),
+            moves: [],
+            patterns: new Map(),
+            mistakes: [],
+            timings: [],
+            improvements: []
+        };
+    }
+
+    async startTraining() {
+        try {
+            const response = await fetch('/api/training/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(this.config)
+            });
+
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.state.active = true;
+                this.state.sessionId = data.session_id;
+                this.updateUI(data.initial_state);
+                this.showMessage('Training started');
+                this.trackTrainingStart();
             } else {
-                this.applyAIMove(result.move);
+                throw new Error(data.message || 'Failed to start training');
             }
-            
-            this.updateStatistics(result.statistics);
-            
-            // Проверяем на фолы и скупы
-            if (result.move.isFoul) {
-                this.state.statistics.fouls++;
-            }
-            if (result.move.isScoop) {
-                this.state.statistics.scoops++;
-            }
-            this.state.statistics.totalMoves++;
-            
-        } else {
-            throw new Error(result.message);
+        } catch (error) {
+            console.error('Failed to start training:', error);
+            this.showError('Failed to start training');
         }
-    } catch (error) {
-        console.error('AI distribution failed:', error);
-        this.showError('Не удалось получить ход AI');
-    } finally {
-        this.state.aiThinking = false;
-        this.hideAIThinking();
     }
-}
 
-validateInput() {
-    const inputCards = this.getInputCards();
-    return inputCards.length >= 2;
-}
+    async requestAIDistribution() {
+        if (!this.validateInput()) {
+            this.showError('Place at least 2 input cards');
+            return;
+        }
 
-getInputCards() {
-    const cards = [];
-    this.elements.inputCards.querySelectorAll('.card').forEach(cardElement => {
-        cards.push(this.getCardData(cardElement));
-    });
-    return cards;
-}
+        this.state.aiThinking = true;
+        this.showAIThinking();
 
-getRemovedCards() {
-    const cards = [];
-    [this.elements.removedCards.row1, this.elements.removedCards.row2].forEach(row => {
-        row.querySelectorAll('.card').forEach(cardElement => {
-            cards.push(this.getCardData(cardElement));
-        });
-    });
-    return cards;
-}
+        try {
+            const response = await fetch('/api/training/distribute', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    input_cards: this.getInputCards(),
+                    removed_cards: this.getRemovedCards(),
+                    config: this.config
+                })
+            });
 
-async animateAIMove(move) {
-    for (const action of move.actions) {
-        await new Promise(resolve => {
-            setTimeout(() => {
-                this.applyMoveAction(action);
-                resolve();
-            }, this.config.animationEnabled ? 300 : 0);
-        });
-    }
-}
-
-applyMoveAction(action) {
-    const { card, position, type } = action;
-    const targetSlot = this.findSlotByPosition(position);
-    
-    if (type === 'place') {
-        this.placeCard(targetSlot, card);
-    } else if (type === 'remove') {
-        this.removeCard(targetSlot);
-    }
-}
-
-updateStatistics(stats) {
-    this.state.statistics = { ...this.state.statistics, ...stats };
-    
-    // Обновляем отображение статистики
-    this.elements.movesCount.textContent = this.state.statistics.movesAnalyzed;
-    this.elements.avgThinkTime.textContent = 
-        `${this.calculateAverageThinkTime().toFixed(2)}s`;
-    this.elements.fantasyRate.textContent = 
-        `${this.calculateFantasyRate().toFixed(1)}%`;
-    this.elements.foulsRate.textContent = 
-        `${this.calculateFoulsRate().toFixed(1)}%`;
-    this.elements.scoopsRate.textContent = 
-        `${this.calculateScoopsRate().toFixed(1)}%`;
-}
-
-calculateAverageThinkTime() {
-    const times = this.state.statistics.thinkTime;
-    return times.length ? times.reduce((a, b) => a + b) / times.length : 0;
-}
-
-calculateFantasyRate() {
-    const { fantasySuccess, totalAttempts } = this.state.statistics;
-    return totalAttempts ? (fantasySuccess / totalAttempts) * 100 : 0;
-}
-
-calculateFoulsRate() {
-    const { fouls, totalMoves } = this.state.statistics;
-    return totalMoves ? (fouls / totalMoves) * 100 : 0;
-}
-
-calculateScoopsRate() {
-    const { scoops, totalMoves } = this.state.statistics;
-    return totalMoves ? (scoops / totalMoves) * 100 : 0;
-}
-
-showAIThinking() {
-    const overlay = document.createElement('div');
-    overlay.className = 'thinking-overlay';
-    overlay.innerHTML = `
-        <div class="thinking-content">
-            <div class="spinner"></div>
-            <p>AI анализирует ходы...</p>
-            ${this.config.animationEnabled ? `
-                <div class="progress-bar">
-                    <div class="progress"></div>
-                </div>
-            ` : ''}
-        </div>
-    `;
-    document.body.appendChild(overlay);
-
-    if (this.config.animationEnabled) {
-        const progress = overlay.querySelector('.progress');
-        let width = 0;
-        const interval = setInterval(() => {
-            if (width >= 100) {
-                clearInterval(interval);
+            const result = await response.json();
+            if (result.status === 'ok') {
+                await this.handleAIMove(result);
             } else {
-                width++;
-                progress.style.width = width + '%';
+                throw new Error(result.message);
             }
-        }, this.config.thinkTime * 10);
+        } catch (error) {
+            console.error('AI distribution failed:', error);
+            this.showError('Failed to get AI move');
+        } finally {
+            this.state.aiThinking = false;
+            this.hideAIThinking();
+        }
     }
-}
 
-hideAIThinking() {
-    const overlay = document.querySelector('.thinking-overlay');
-    if (overlay) {
-        overlay.classList.add('fade-out');
-        setTimeout(() => overlay.remove(), 300);
+    async handleAIMove(result) {
+        const startTime = performance.now();
+
+        if (this.config.animationEnabled) {
+            await this.animateAIMove(result.move);
+        } else {
+            this.applyAIMove(result.move);
+        }
+
+        const duration = performance.now() - startTime;
+        this.updateStatistics({
+            ...result.statistics,
+            moveTime: duration
+        });
+
+        this.analyzeMove(result.move);
+    }
+
+    async animateAIMove(move) {
+        for (const action of move.actions) {
+            await new Promise(resolve => {
+                setTimeout(() => {
+                    this.applyMoveAction(action);
+                    resolve();
+                }, this.config.animationEnabled ? 300 : 0);
+            });
+        }
+    }
+
+    applyMoveAction(action) {
+        const { card, position, type } = action;
+        const targetSlot = this.findSlotByPosition(position);
+        
+        if (type === 'place') {
+            this.placeCard(targetSlot, card);
+            if (this.config.soundEnabled) {
+                this.playSound('cardPlace');
+            }
+        } else if (type === 'remove') {
+            this.removeCard(targetSlot);
+            if (this.config.soundEnabled) {
+                this.playSound('cardFlip');
+            }
+        }
+    }
+
+    analyzeMove(move) {
+        // Анализируем ход и обновляем статистику
+        const analysis = {
+            timestamp: Date.now(),
+            move: move,
+            position: move.position,
+            pattern: this.identifyPattern(move),
+            isFoul: this.checkForFoul(move),
+            isScoop: this.checkForScoop(move),
+            thinkTime: this.state.aiThinking ? 
+                performance.now() - this.state.thinkStartTime : 0
+        };
+
+        this.state.history.push(analysis);
+        this.updateAnalytics(analysis);
+    }
+
+    updateAnalytics(analysis) {
+        // Обновляем паттерны
+        if (analysis.pattern) {
+            const patternStats = this.analytics.patterns.get(analysis.pattern) || {
+                count: 0,
+                success: 0,
+                fails: 0
+            };
+            patternStats.count++;
+            if (analysis.isFoul) {
+                patternStats.fails++;
+            } else {
+                patternStats.success++;
+            }
+            this.analytics.patterns.set(analysis.pattern, patternStats);
+        }
+
+        // Обновляем ошибки
+        if (analysis.isFoul) {
+            this.analytics.mistakes.push({
+                timestamp: Date.now(),
+                move: analysis.move,
+                type: 'foul'
+            });
+        }
+
+        // Обновляем временную статистику
+        this.analytics.timings.push(analysis.thinkTime);
+
+        // Рассчитываем улучшения
+        this.calculateImprovements();
+    }
+
+    calculateImprovements() {
+        const recentMoves = this.state.history.slice(-20);
+        if (recentMoves.length < 10) return;
+
+        const midPoint = Math.floor(recentMoves.length / 2);
+        const firstHalf = recentMoves.slice(0, midPoint);
+        const secondHalf = recentMoves.slice(midPoint);
+
+        const improvement = {
+            timestamp: Date.now(),
+            foulsRate: this.calculateImprovement(firstHalf, secondHalf, 'isFoul'),
+            scoopsRate: this.calculateImprovement(firstHalf, secondHalf, 'isScoop'),
+            thinkTime: this.calculateImprovement(firstHalf, secondHalf, 'thinkTime', true)
+        };
+
+        this.analytics.improvements.push(improvement);
+    }
+
+    calculateImprovement(firstHalf, secondHalf, property, isTime = false) {
+        const firstAvg = firstHalf.reduce((sum, move) => sum + (move[property] ? 1 : 0), 0) / firstHalf.length;
+        const secondAvg = secondHalf.reduce((sum, move) => sum + (move[property] ? 1 : 0), 0) / secondHalf.length;
+
+        if (isTime) {
+            return ((firstAvg - secondAvg) / firstAvg) * 100; // Уменьшение времени - улучшение
+        }
+        return ((secondAvg - firstAvg) / firstAvg) * 100; // Увеличение показателя - улучшение
+    }
+
+    updateStatistics(stats) {
+        this.state.statistics = { ...this.state.statistics, ...stats };
+        
+        // Обновляем отображение статистики
+        if (this.elements.movesCount) {
+            this.elements.movesCount.textContent = this.state.statistics.movesAnalyzed;
+        }
+        if (this.elements.avgThinkTime) {
+            this.elements.avgThinkTime.textContent = 
+                `${this.calculateAverageThinkTime().toFixed(2)}s`;
+        }
+        if (this.elements.fantasyRate) {
+            this.elements.fantasyRate.textContent = 
+                `${this.calculateFantasyRate().toFixed(1)}%`;
+        }
+        if (this.elements.foulsRate) {
+            this.elements.foulsRate.textContent = 
+                `${this.calculateFoulsRate().toFixed(1)}%`;
+        }
+        if (this.elements.scoopsRate) {
+            this.elements.scoopsRate.textContent = 
+                `${this.calculateScoopsRate().toFixed(1)}%`;
+        }
+
+        // Анимируем обновление статистики
+        this.animateStatisticsUpdate();
+    }
+
+    animateStatisticsUpdate() {
+        if (!this.config.animationEnabled) return;
+
+        document.querySelectorAll('.stat-value').forEach(element => {
+            element.classList.add('updated');
+            setTimeout(() => element.classList.remove('updated'), 300);
+        });
+    }
+
+    calculateAverageThinkTime() {
+        const times = this.state.statistics.thinkTime;
+        return times.length ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+    }
+
+    calculateFantasyRate() {
+        const { fantasySuccess, totalAttempts } = this.state.statistics;
+        return totalAttempts ? (fantasySuccess / totalAttempts) * 100 : 0;
+    }
+
+    calculateFoulsRate() {
+        const { fouls, totalMoves } = this.state.statistics;
+        return totalMoves ? (fouls / totalMoves) * 100 : 0;
+    }
+
+    calculateScoopsRate() {
+        const { scoops, totalMoves } = this.state.statistics;
+        return totalMoves ? (scoops / totalMoves) * 100 : 0;
+    }
+
+    showAIThinking() {
+        const overlay = document.createElement('div');
+        overlay.className = 'thinking-overlay';
+        overlay.innerHTML = `
+            <div class="thinking-content">
+                <div class="spinner"></div>
+                <p>AI analyzing moves...</p>
+                ${this.config.animationEnabled ? `
+                    <div class="progress-bar">
+                        <div class="progress"></div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        if (this.config.animationEnabled) {
+            const progress = overlay.querySelector('.progress');
+            let width = 0;
+            const interval = setInterval(() => {
+                if (width >= 100) {
+                    clearInterval(interval);
+                } else {
+                    width++;
+                    progress.style.width = width + '%';
+                }
+            }, this.config.thinkTime * 10);
+        }
+    }
+
+    hideAIThinking() {
+        const overlay = document.querySelector('.thinking-overlay');
+        if (overlay) {
+            overlay.classList.add('fade-out');
+            setTimeout(() => overlay.remove(), 300);
         }
     }
 
@@ -443,159 +587,45 @@ hideAIThinking() {
         
         document.body.appendChild(toast);
         
-        setTimeout(() => {
-            toast.classList.add('fade-out');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.add('fade-out');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        });
     }
 
     showError(message) {
         this.showMessage(message, 'error');
-    }
-
-    resetBoard() {
-        // Анимация сброса
-        const cards = document.querySelectorAll('.card');
-        cards.forEach(card => {
-            card.classList.add('card-removing');
-        });
-
-        setTimeout(() => {
-            document.querySelectorAll('.card-slot').forEach(slot => {
-                slot.innerHTML = '';
-                slot.classList.remove('occupied');
-            });
-
-            this.clearSelection();
-            this.actionHistory = [];
-            this.updateStatistics({
-                movesAnalyzed: 0,
-                thinkTime: [],
-                fantasySuccess: 0,
-                totalAttempts: 0,
-                fouls: 0,
-                scoops: 0,
-                totalMoves: 0
-            });
-        }, 300);
-    }
-
-    clearSelection() {
-        this.state.selectedRank = null;
-        this.state.selectedSuit = null;
-        this.state.selectedSlot = null;
-
-        this.elements.ranks.forEach(button => {
-            button.classList.remove('selected');
-        });
-        this.elements.suits.forEach(button => {
-            button.classList.remove('selected');
-        });
-        document.querySelectorAll('.card-slot').forEach(slot => {
-            slot.classList.remove('selected');
-        });
-    }
-
-    handleKeyboard(e) {
-        // Быстрые клавиши для рангов
-        const rankKeys = {
-            'a': 'A', 'k': 'K', 'q': 'Q', 'j': 'J', 't': 'T',
-            '2': '2', '3': '3', '4': '4', '5': '5',
-            '6': '6', '7': '7', '8': '8', '9': '9'
-        };
-
-        // Быстрые клавиши для мастей
-        const suitKeys = {
-            'h': 'h', 's': 's', 'd': 'd', 'c': 'c'
-        };
-
-        const key = e.key.toLowerCase();
-
-        if (rankKeys[key]) {
-            this.selectRank(rankKeys[key]);
-        } else if (suitKeys[key]) {
-            this.selectSuit(suitKeys[key]);
-        } else if (e.key === 'Escape') {
-            this.clearSelection();
-        } else if (e.key === 'Enter') {
-            this.requestAIDistribution();
+        if (this.config.soundEnabled) {
+            this.playSound('error');
         }
     }
 
-    loadSettings() {
-        try {
-            const savedSettings = localStorage.getItem('trainingSettings');
-            if (savedSettings) {
-                const settings = JSON.parse(savedSettings);
-                this.config = { ...this.config, ...settings };
-                this.applySettings();
-            }
-        } catch (error) {
-            console.error('Failed to load settings:', error);
-        }
-    }
+    playSound(name) {
+        if (!this.config.soundEnabled || !this.sounds.has(name)) return;
 
-    saveSettings() {
-        try {
-            localStorage.setItem('trainingSettings', JSON.stringify(this.config));
-        } catch (error) {
-            console.error('Failed to save settings:', error);
-        }
-    }
-
-    applySettings() {
-        // Применяем настройки к UI
-        if (this.elements.fantasyMode) {
-            this.elements.fantasyMode.checked = this.config.fantasyMode;
-        }
-        if (this.elements.progressiveFantasy) {
-            this.elements.progressiveFantasy.checked = this.config.progressiveFantasy;
-        }
-        if (this.elements.thinkTime) {
-            this.elements.thinkTime.value = this.config.thinkTime;
-        }
-        if (this.elements.animationControl) {
-            this.elements.animationControl.value = this.config.animationEnabled ? 'normal' : 'off';
-        }
-
-        // Применяем анимации
-        document.body.classList.toggle('animations-disabled', !this.config.animationEnabled);
-
-        // Обновляем видимость карт
-        this.updateInputCardsVisibility();
-    }
-
-    updateInputCardsVisibility() {
-        const inputContainer = this.elements.inputCards;
-        const slots = inputContainer.querySelectorAll('.card-slot');
-        
-        slots.forEach((slot, index) => {
-            if (this.config.fantasyMode) {
-                slot.style.display = index < 17 ? 'block' : 'none';
-            } else {
-                slot.style.display = index < 5 ? 'block' : 'none';
-            }
-        });
-    }
-
-    adjustCardSizeForLandscape() {
-        document.documentElement.style.setProperty('--card-width', '50px');
-        document.documentElement.style.setProperty('--card-height', '70px');
-    }
-
-    adjustCardSizeForPortrait() {
-        document.documentElement.style.setProperty('--card-width', '60px');
-        document.documentElement.style.setProperty('--card-height', '84px');
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createBufferSource();
+        source.buffer = this.sounds.get(name);
+        source.connect(audioContext.destination);
+        source.start(0);
     }
 
     exportTrainingData() {
         const data = {
             statistics: this.state.statistics,
+            analytics: this.analytics,
             config: this.config,
+            history: this.state.history,
             timestamp: new Date().toISOString()
         };
 
-        const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+            type: 'application/json'
+        });
+
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -605,9 +635,31 @@ hideAIThinking() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
+
+    cleanup() {
+        // Очищаем обработчики событий
+        this.eventHandlers.forEach((handlers, element) => {
+            handlers.forEach((handler, event) => {
+                element.removeEventListener(event, handler);
+            });
+        });
+        this.eventHandlers.clear();
+
+        // Сохраняем состояние если включено автосохранение
+        if (this.config.autoSave) {
+            this.saveState();
+        }
+
+        // Очищаем звуки
+        this.sounds.clear();
+
+        // Очищаем анимации
+        this.animations.clear();
+
+        // Очищаем UI
+        this.resetBoard();
+    }
 }
 
-// Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => {
-    window.trainingMode = new TrainingMode();
-});
+// Экспорт класса
+export default TrainingMode;
