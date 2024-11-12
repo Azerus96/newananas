@@ -117,8 +117,8 @@ class Config:
                 'host': '0.0.0.0',
                 'port': int(os.getenv('PORT', 5000)),
                 'debug': False,
-                'static_folder': 'static',
-                'template_folder': 'templates',
+                'static_folder': 'web/static',  # Исправленный путь для статических файлов
+                'template_folder': 'web/templates',  # Исправленный путь для шаблонов
                 'session_lifetime': 3600,
                 'max_content_length': 16 * 1024 * 1024,
                 'cors_enabled': True,
@@ -306,3 +306,4 @@ class Config:
     def __repr__(self) -> str:
         """Подробное строковое представление"""
         return f"Config(path={self.config_path}, sections={list(self.config.keys())})"
+
