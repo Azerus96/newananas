@@ -203,38 +203,6 @@ async def process_ai_move(game: Game):
         WEBSOCKET_ERRORS.labels(type='ai_move_error').inc()
         return False
 
-#################
-#### Декораторы ####
-#################
-
-def require_game(f):
-    """Декоратор для проверки наличия активной игры"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        game_id = session.get('current_game_id')
-        if not game_id:
-            logger.warning(f"No active game for user {session.get('user_id')}")
-            return jsonify({'error': 'No active game'}), 400
-        game = app_state.get_game(game_id)
-        if not game:
-            logger.warning(f"Game {game_id} not found")
-            return jsonify({'error': 'Game not found'}), 404
-        return f(*args, game=game, **kwargs)
-    return decorated_function
-
-def handle_errors(f):
-    """Декоратор для обработки ошибок"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Error in {f.__name__}: {e}", exc_info=True)
-            error_id = str(uuid.uuid4())
-            analytics_manager.track_error(error_id, e)
-            return jsonify({'error': str(e), 'error_id': error_id}), 500
-    return decorated_function
-
 ###############
 #### Роуты ####
 ###############
@@ -245,7 +213,6 @@ def new_game():
     """Создает новую игру"""
     data = request.get_json()
     game_id = str(uuid.uuid4())
-
     try:
         game_config = {
             'players': data.get('players', 2),
@@ -439,4 +406,4 @@ if __name__ == '__main__':
         )
     except Exception as e:
         logger.critical(f"Failed to start server: {e}", exc_info=True)
-        sys.exit(1)                    
+        sys.exit(1)
