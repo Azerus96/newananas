@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Optional, Dict, Any
 import numpy as np
+import os
+import json
+import tensorflow as tf
 
 from core.card import Card
 from core.board import Street, Board
@@ -22,7 +25,59 @@ class BaseAgent(ABC):
         """Базовый метод загрузки последнего состояния"""
         logger.debug(f"Base load_latest called for {name}")
         return cls(name=name, think_time=think_time) if name else cls(think_time=think_time)
+
+    def save_model(self, filepath: str) -> None:
+        """Сохраняет модель и дополнительные данные"""
+        if hasattr(self, 'model'):
+            self.model.save_weights(filepath + '_main.h5')
+        if hasattr(self, 'target_model'):
+            self.target_model.save_weights(filepath + '_target.h5')
+
+        # Сохраняем метаданные агента
+        metadata = {
+            'name': self.name,
+            'think_time': self.think_time,
+            'games_played': self.games_played,
+            'games_won': self.games_won,
+            'total_score': self.total_score,
+            'moves': self.moves,
+            'opponent_moves': self.opponent_moves,
+            'config': getattr(self, 'config', {})  # Сохраняем конфигурацию, если она есть
+        }
         
+        with open(filepath + '_metadata.json', 'w') as f:
+            json.dump(metadata, f, indent=4)
+        logger.info(f"Model and metadata saved to {filepath}")
+
+    def load_model(self, filepath: str) -> None:
+        """Загружает модель и дополнительные данные"""
+        if hasattr(self, 'model') and os.path.exists(filepath + '_main.h5'):
+            self.model.load_weights(filepath + '_main.h5')
+        else:
+            logger.warning(f"No main model weights found at {filepath + '_main.h5'}")
+
+        if hasattr(self, 'target_model') and os.path.exists(filepath + '_target.h5'):
+            self.target_model.load_weights(filepath + '_target.h5')
+        else:
+            logger.warning(f"No target model weights found at {filepath + '_target.h5'}")
+        
+        # Загружаем метаданные
+        try:
+            with open(filepath + '_metadata.json', 'r') as f:
+                metadata = json.load(f)
+                self.name = metadata.get('name', self.name)
+                self.think_time = metadata.get('think_time', self.think_time)
+                self.games_played = metadata.get('games_played', 0)
+                self.games_won = metadata.get('games_won', 0)
+                self.total_score = metadata.get('total_score', 0)
+                self.moves = metadata.get('moves', [])
+                self.opponent_moves = metadata.get('opponent_moves', [])
+                if hasattr(self, 'config'):
+                    self.config.update(metadata.get('config', {}))
+            logger.info(f"Model and metadata loaded from {filepath}")
+        except FileNotFoundError:
+            logger.warning(f"No metadata file found at {filepath}")
+
     @abstractmethod
     def choose_move(self, 
                    board: Board,
