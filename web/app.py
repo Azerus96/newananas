@@ -106,6 +106,18 @@ AVAILABLE_AGENTS = {
     'ppo': {'class': PPOAgent, 'display_name': 'PPO'}
 }
 
+# Настройки по умолчанию
+DEFAULT_PREFERENCES = {
+    'theme': 'light',
+    'animation_speed': 'normal',
+    'sound_enabled': True,
+    'language': 'en',
+    'notifications_enabled': True,
+    'auto_save': True,
+    'keyboard_shortcuts': True,
+    'accessibility_mode': False
+}
+
 # Инициализация Flask и SocketIO
 app = Flask(__name__,
     static_folder=config.get('web.static_folder'),
@@ -127,7 +139,7 @@ app.config.update(
     SOCKETIO_ENGINEIO_LOGGER=True
 )
 
-# Инициализация SocketIO с расширенными настройками
+# Инициализация SocketIO
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*",
@@ -157,7 +169,48 @@ connections = {
 }
 
 ################
-#### Функции ####
+#### Функции для работы с preferences ####
+################
+
+def get_client_preferences() -> dict:
+    """Получает настройки клиента из сессии"""
+    if 'preferences' not in session:
+        session['preferences'] = DEFAULT_PREFERENCES.copy()
+    return session['preferences']
+
+def update_client_preferences(updates: dict) -> dict:
+    """Обновляет настройки клиента"""
+    preferences = get_client_preferences()
+    preferences.update(updates)
+    session['preferences'] = preferences
+    return preferences
+
+def save_preferences_to_cookies(preferences: dict, response):
+    """Сохраняет настройки в cookies"""
+    for key, value in preferences.items():
+        response.set_cookie(
+            f'pref_{key}',
+            str(value),
+            max_age=31536000,  # 1 год
+            httponly=True,
+            secure=True,
+            samesite='Lax'
+        )
+
+def load_preferences_from_cookies() -> dict:
+    """Загружает настройки из cookies"""
+    preferences = DEFAULT_PREFERENCES.copy()
+    for key in DEFAULT_PREFERENCES.keys():
+        cookie_value = request.cookies.get(f'pref_{key}')
+        if cookie_value is not None:
+            if isinstance(DEFAULT_PREFERENCES[key], bool):
+                preferences[key] = cookie_value.lower() == 'true'
+            else:
+                preferences[key] = type(DEFAULT_PREFERENCES[key])(cookie_value)
+    return preferences
+
+################
+#### Вспомогательные функции ####
 ################
 
 def create_agent(agent_type: str, position: int, think_time: int) -> BaseAgent:
@@ -203,9 +256,110 @@ async def process_ai_move(game: Game):
         WEBSOCKET_ERRORS.labels(type='ai_move_error').inc()
         return False
 
+async def process_ai_moves(game: Game):
+    """Обработка всех ходов AI"""
+    while game.current_player != 0 and not game.is_game_over():
+        success = await process_ai_move(game)
+        if not success:
+            break
+
+def emit_game_update(game: Game, event_type: str = 'game_update'):
+    """Отправляет обновление состояния игры"""
+    socketio.emit(
+        event_type,
+        {
+            'game_state': game.get_state(),
+            'current_player': game.current_player,
+            'is_game_over': game.is_game_over(),
+            'timestamp': datetime.now().isoformat()
+        },
+        room=str(game.id)
+    )
+
+def check_game_over(game: Game):
+    """Проверяет окончание игры и отправляет результаты"""
+    if game.is_game_over():
+        result = game.get_result()
+        analytics_manager.track_game_end(game, result)
+        socketio.emit('game_over', {
+            'result': result.to_dict(),
+            'statistics': analytics_manager.get_game_statistics(game)
+        }, room=str(game.id))
+        GAME_METRICS.labels(type='game_completed').inc()
+
+def check_connection_health():
+    """Проверяет состояние подключения"""
+    return {
+        'status': 'healthy' if connections['errors'] == 0 else 'degraded',
+        'active_connections': connections['active'],
+        'total_connections': connections['total'],
+        'error_rate': connections['errors'] / max(connections['total'], 1),
+        'last_error': connections['last_error']
+    }
+
+def is_mobile():
+    """Проверяет, является ли клиент мобильным устройством"""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    return any(device in user_agent for device in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
+
+################
+#### Декораторы ####
+################
+
+def handle_errors(f):
+    """Декоратор для обработки ошибок"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in {f.__name__}: {str(e)}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+    return decorated_function
+
+def require_game(f):
+    """Декоратор для проверки наличия активной игры"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        game_id = session.get('current_game_id')
+        game = app_state.get_game(game_id) if game_id else None
+        
+        if not game:
+            return jsonify({'error': 'No active game'}), 404
+            
+        return f(game, *args, **kwargs)
+    return decorated_function
+
+##################
+#### Middleware ####
+##################
+
+@app.before_request
+def initialize_session():
+    """Инициализация сессии перед каждым запросом"""
+    if 'preferences' not in session:
+        session['preferences'] = load_preferences_from_cookies()
+    g.language = session['preferences'].get('language', 'en')
+
+@app.after_request
+def after_request(response):
+    """Обработка после каждого запроса"""
+    if 'preferences' in session:
+        save_preferences_to_cookies(session['preferences'], response)
+    return response
+
 ###############
 #### Роуты ####
 ###############
+
+@app.route('/')
+def index():
+    """Главная страница"""
+    return render_template(
+        'index.html',
+        preferences=get_client_preferences(),
+        agents=AVAILABLE_AGENTS
+    )
 
 @app.route('/api/new_game', methods=['POST'])
 @handle_errors
@@ -296,45 +450,94 @@ def get_game_state(game):
         'connection_status': check_connection_health()
     })
 
+@app.route('/api/preferences', methods=['GET', 'POST'])
+def handle_preferences():
+    """Обработка настроек пользователя"""
+    if request.method == 'POST':
+        try:
+            updates = request.get_json()
+            valid_updates = {
+                k: v for k, v in updates.items() 
+                if k in DEFAULT_PREFERENCES
+            }
+            preferences = update_client_preferences(valid_updates)
+            return jsonify({
+                'status': 'ok',
+                'preferences': preferences
+            })
+        except Exception as e:
+            logger.error(f"Error updating preferences: {e}")
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 400
+    
+    # GET запрос
+    return jsonify({
+        'status': 'ok',
+        'preferences': get_client_preferences()
+    })
+
+@app.route('/api/preferences/reset', methods=['POST'])
+def reset_preferences():
+    """Сброс настроек к значениям по умолчанию"""
+    session['preferences'] = DEFAULT_PREFERENCES.copy()
+    response = jsonify({
+        'status': 'ok',
+        'preferences': DEFAULT_PREFERENCES
+    })
+    # Очищаем все cookies с настройками
+    for key in DEFAULT_PREFERENCES.keys():
+        response.delete_cookie(f'pref_{key}')
+    return response
+
 @app.route('/api/game/save', methods=['POST'])
 @require_game
 @handle_errors
 def save_game(game):
     """Сохраняет текущую игру"""
-    if save_game_progress(game):
-        return jsonify({'status': 'ok'})
-    return jsonify({'error': 'Failed to save game'}), 500
+    try:
+        game_state = game.get_state()
+        session['saved_game'] = game_state
+        return jsonify({
+            'status': 'ok',
+            'message': 'Game saved successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error saving game: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to save game'
+        }), 500
 
 @app.route('/api/game/load', methods=['POST'])
 @handle_errors
 def load_game():
     """Загружает сохраненную игру"""
-    game = load_game_progress()
-    if game:
+    saved_game = session.get('saved_game')
+    if not saved_game:
+        return jsonify({
+            'status': 'error',
+            'message': 'No saved game found'
+        }), 404
+
+    try:
+        game_id = str(uuid.uuid4())
+        game = app_state.create_game(game_id, saved_game)
+        session['current_game_id'] = game_id
         emit_game_update(game, 'game_loaded')
+        
         return jsonify({
             'status': 'ok',
+            'game_id': game_id,
             'game_state': game.get_state()
         })
-    return jsonify({'error': 'No saved game found'}), 404
-
-@app.route('/api/settings', methods=['GET', 'POST'])
-@handle_errors
-def handle_settings():
-    """Обработка пользовательских настроек"""
-    if request.method == 'POST':
-        settings = request.get_json()
-        session['preferences'].update({
-            'theme': settings.get('theme', 'light'),
-            'animation_speed': settings.get('animation_speed', 'normal'),
-            'sound_enabled': settings.get('sound_enabled', True)
-        })
-        return jsonify({'status': 'ok'})
-    
-    return jsonify({
-        'status': 'ok',
-        'preferences': get_client_preferences()
-    })
+    except Exception as e:
+        logger.error(f"Error loading game: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to load game'
+        }), 500
 
 @app.route('/api/statistics', methods=['GET'])
 @handle_errors
@@ -345,10 +548,48 @@ def get_statistics():
         'statistics': analytics_manager.get_full_statistics(),
         'server_stats': {
             'connections': connections,
-            'active_games': len(app_state.games),
+            'active_games': len(app_state.get_active_games()),
             'uptime': time() - app.start_time if hasattr(app, 'start_time') else 0
         }
     })
+
+##################
+#### WebSocket события ####
+##################
+
+@socketio.on('connect')
+def handle_connect():
+    """Обработка подключения клиента"""
+    connections['active'] += 1
+    connections['total'] += 1
+    WEBSOCKET_CONNECTIONS.inc()
+    logger.info(f"Client connected. Active connections: {connections['active']}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Обработка отключения клиента"""
+    connections['active'] -= 1
+    logger.info(f"Client disconnected. Active connections: {connections['active']}")
+
+@socketio.on('join_game')
+def handle_join_game(game_id):
+    """Обработка присоединения к игре"""
+    join_room(str(game_id))
+    logger.debug(f"Client joined game room: {game_id}")
+
+@socketio.on('leave_game')
+def handle_leave_game(game_id):
+    """Обработка выхода из игры"""
+    leave_room(str(game_id))
+    logger.debug(f"Client left game room: {game_id}")
+
+@socketio.on_error()
+def handle_error(e):
+    """Обработка ошибок WebSocket"""
+    connections['errors'] += 1
+    connections['last_error'] = str(e)
+    WEBSOCKET_ERRORS.labels(type='general').inc()
+    logger.error(f"WebSocket error: {e}")
 
 ##################
 #### Обработка ошибок ####
@@ -378,15 +619,9 @@ def internal_error(error):
         preferences=get_client_preferences()
     ), 500
 
-#######################
-#### Запуск приложения ####
-#######################
-
 if __name__ == '__main__':
     try:
         app.start_time = time()
-
-        # Получение настроек из конфигурации
         port = int(os.environ.get('PORT', config.get('web.port', 5000)))
         debug = config.get('web.debug', False)
 
@@ -394,7 +629,6 @@ if __name__ == '__main__':
         logger.info(f"Available agents: {list(AVAILABLE_AGENTS.keys())}")
         logger.info(f"Application version: {config.get('app.version', 'unknown')}")
 
-        # Запуск сервера
         socketio.run(
             app,
             host='0.0.0.0',
